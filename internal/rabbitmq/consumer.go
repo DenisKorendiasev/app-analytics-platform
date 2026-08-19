@@ -14,7 +14,6 @@ import (
 
 const (
 	workerConsumerTag = "app-analytics-worker"
-	workerPrefetch    = 1
 )
 
 // Consumer owns a RabbitMQ connection, channel, and event subscription.
@@ -47,7 +46,7 @@ func NewConsumer(ctx context.Context, cfg Config) (*Consumer, error) {
 	if err := declareTopology(channel, cfg); err != nil {
 		return nil, errors.Join(err, closeChannelAndConnection(channel, connection))
 	}
-	if err := channel.Qos(workerPrefetch, 0, false); err != nil {
+	if err := channel.Qos(worker.BatchSize, 0, false); err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("set RabbitMQ consumer prefetch: %w", err),
 			closeChannelAndConnection(channel, connection),

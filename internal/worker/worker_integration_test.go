@@ -98,7 +98,7 @@ func TestWorkerPersistsPublishedEvent(t *testing.T) {
 
 	select {
 	case record := <-records:
-		assertEventRecord(t, record, want)
+		assertBatchRecord(t, record, 1)
 	case err := <-workerResult:
 		t.Fatalf("Worker stopped before persisting the event: %v", err)
 	case <-ctx.Done():
@@ -142,30 +142,19 @@ func integrationEvent() event.Event {
 	}
 }
 
-func assertEventRecord(t *testing.T, record slog.Record, want event.Event) {
+func assertBatchRecord(t *testing.T, record slog.Record, wantSize int) {
 	t.Helper()
 
-	if record.Message != "event persisted" {
-		t.Errorf("log message = %q, want event persisted", record.Message)
+	if record.Message != "event batch processed" {
+		t.Errorf("log message = %q, want event batch processed", record.Message)
 	}
 	attributes := make(map[string]string)
 	record.Attrs(func(attribute slog.Attr) bool {
 		attributes[attribute.Key] = fmt.Sprint(attribute.Value.Any())
 		return true
 	})
-	wantAttributes := map[string]string{
-		"event_id":      want.EventID.String(),
-		"app_id":        want.AppID.String(),
-		"event_type":    string(want.EventType),
-		"country":       want.Country,
-		"platform":      string(want.Platform),
-		"revenue_cents": fmt.Sprint(want.RevenueCents),
-		"timestamp":     want.Timestamp.String(),
-	}
-	for key, value := range wantAttributes {
-		if attributes[key] != value {
-			t.Errorf("log attribute %q = %q, want %q", key, attributes[key], value)
-		}
+	if attributes["batch_size"] != fmt.Sprint(wantSize) {
+		t.Errorf("batch_size = %q, want %d", attributes["batch_size"], wantSize)
 	}
 }
 
@@ -178,7 +167,7 @@ func (h *captureHandler) Enabled(context.Context, slog.Level) bool {
 }
 
 func (h *captureHandler) Handle(_ context.Context, record slog.Record) error {
-	if record.Message == "event persisted" {
+	if record.Message == "event batch processed" {
 		h.records <- record.Clone()
 	}
 	return nil

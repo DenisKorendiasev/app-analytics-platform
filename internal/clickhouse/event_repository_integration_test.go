@@ -74,9 +74,19 @@ func TestEventRepository(t *testing.T) {
 		RevenueCents: 999,
 		Timestamp:    time.Date(2026, time.August, 18, 12, 35, 2, 123000000, time.UTC),
 	}
+	second := want
+	second.EventID = uuid.MustParse("e2a80cf1-cb41-4c13-91ea-cf1c4c81eae3")
+	second.Timestamp = second.Timestamp.Add(time.Millisecond)
 	repository := clickhouseinfra.NewEventRepository(connection)
-	if err := repository.Insert(ctx, want); err != nil {
-		t.Fatalf("Insert() error = %v", err)
+	if err := repository.InsertBatch(ctx, []event.Event{want, second}); err != nil {
+		t.Fatalf("InsertBatch() error = %v", err)
+	}
+	var eventCount uint64
+	if err := connection.QueryRow(ctx, "SELECT count() FROM events").Scan(&eventCount); err != nil {
+		t.Fatalf("count inserted events: %v", err)
+	}
+	if eventCount != 2 {
+		t.Errorf("inserted events = %d, want 2", eventCount)
 	}
 
 	const selectEvent = `
