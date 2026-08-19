@@ -19,6 +19,7 @@ func TestWorkerRunProcessesAndAcknowledgesEvent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	applicationEvent := testEvent()
+	persisted := false
 	acknowledged := false
 	receiveCalls := 0
 	consumer := &consumerStub{
@@ -28,6 +29,9 @@ func TestWorkerRunProcessesAndAcknowledgesEvent(t *testing.T) {
 				return Delivery{
 					Event: applicationEvent,
 					Ack: func() error {
+						if !persisted {
+							t.Error("delivery acknowledged before persistence")
+						}
 						acknowledged = true
 						cancel()
 						return nil
@@ -38,20 +42,30 @@ func TestWorkerRunProcessesAndAcknowledgesEvent(t *testing.T) {
 			return Delivery{}, ctx.Err()
 		},
 	}
+	writer := &writerStub{insert: func(_ context.Context, got event.Event) error {
+		if got != applicationEvent {
+			t.Errorf("Insert() event = %+v, want %+v", got, applicationEvent)
+		}
+		persisted = true
+		return nil
+	}}
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 
-	if err := New(consumer, logger).Run(ctx); err != nil {
+	if err := New(consumer, writer, logger).Run(ctx); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
+	if !persisted {
+		t.Error("event was not persisted")
+	}
 	if !acknowledged {
 		t.Error("delivery was not acknowledged")
 	}
 	if consumer.stopCalls != 1 {
 		t.Errorf("Stop() calls = %d, want 1", consumer.stopCalls)
 	}
-	for _, value := range []string{"event received", applicationEvent.EventID.String(), applicationEvent.AppID.String(), string(applicationEvent.EventType), applicationEvent.Country, string(applicationEvent.Platform)} {
+	for _, value := range []string{"event persisted", applicationEvent.EventID.String(), applicationEvent.AppID.String(), string(applicationEvent.EventType), applicationEvent.Country, string(applicationEvent.Platform)} {
 		if !strings.Contains(logs.String(), value) {
 			t.Errorf("log output does not contain %q: %s", value, logs.String())
 		}
@@ -60,8 +74,9 @@ func TestWorkerRunProcessesAndAcknowledgesEvent(t *testing.T) {
 
 func TestWorkerRunFinishesCurrentDeliveryBeforeStopping(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	ackStarted := make(chan struct{})
-	releaseAck := make(chan struct{})
+	persistStarted := make(chan struct{})
+	releasePersist := make(chan struct{})
+	acknowledged := false
 	consumer := &consumerStub{}
 	consumer.receive = func(ctx context.Context) (Delivery, error) {
 		if consumer.receiveCalls == 0 {
@@ -69,8 +84,7 @@ func TestWorkerRunFinishesCurrentDeliveryBeforeStopping(t *testing.T) {
 			return Delivery{
 				Event: testEvent(),
 				Ack: func() error {
-					close(ackStarted)
-					<-releaseAck
+					acknowledged = true
 					return nil
 				},
 			}, nil
@@ -78,17 +92,25 @@ func TestWorkerRunFinishesCurrentDeliveryBeforeStopping(t *testing.T) {
 		<-ctx.Done()
 		return Delivery{}, ctx.Err()
 	}
+	writer := &writerStub{insert: func(processingContext context.Context, _ event.Event) error {
+		close(persistStarted)
+		<-releasePersist
+		if err := processingContext.Err(); err != nil {
+			t.Errorf("processing context canceled before current delivery finished: %v", err)
+		}
+		return nil
+	}}
 	done := make(chan error, 1)
 	go func() {
-		done <- New(consumer, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))).Run(ctx)
+		done <- New(consumer, writer, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))).Run(ctx)
 	}()
 
-	<-ackStarted
+	<-persistStarted
 	cancel()
 	if consumer.stopCount() != 0 {
 		t.Error("consumer stopped before the current delivery finished")
 	}
-	close(releaseAck)
+	close(releasePersist)
 
 	select {
 	case err := <-done:
@@ -101,6 +123,9 @@ func TestWorkerRunFinishesCurrentDeliveryBeforeStopping(t *testing.T) {
 	if consumer.stopCount() != 1 {
 		t.Errorf("Stop() calls = %d, want 1", consumer.stopCount())
 	}
+	if !acknowledged {
+		t.Error("completed delivery was not acknowledged")
+	}
 }
 
 func TestWorkerRunReceiveError(t *testing.T) {
@@ -111,7 +136,7 @@ func TestWorkerRunReceiveError(t *testing.T) {
 		},
 	}
 
-	err := New(consumer, discardLogger()).Run(context.Background())
+	err := New(consumer, &writerStub{}, discardLogger()).Run(context.Background())
 	if !errors.Is(err, receiveError) {
 		t.Fatalf("Run() error = %v, want wrapped receive error", err)
 	}
@@ -128,9 +153,36 @@ func TestWorkerRunAcknowledgementError(t *testing.T) {
 		},
 	}
 
-	err := New(consumer, discardLogger()).Run(context.Background())
+	err := New(consumer, &writerStub{}, discardLogger()).Run(context.Background())
 	if !errors.Is(err, ackError) {
 		t.Fatalf("Run() error = %v, want wrapped acknowledgement error", err)
+	}
+}
+
+func TestWorkerRunPersistenceErrorDoesNotAcknowledge(t *testing.T) {
+	persistError := errors.New("ClickHouse unavailable")
+	acknowledged := false
+	consumer := &consumerStub{
+		receive: func(context.Context) (Delivery, error) {
+			return Delivery{
+				Event: testEvent(),
+				Ack: func() error {
+					acknowledged = true
+					return nil
+				},
+			}, nil
+		},
+	}
+	writer := &writerStub{insert: func(context.Context, event.Event) error {
+		return persistError
+	}}
+
+	err := New(consumer, writer, discardLogger()).Run(context.Background())
+	if !errors.Is(err, persistError) {
+		t.Fatalf("Run() error = %v, want wrapped persistence error", err)
+	}
+	if acknowledged {
+		t.Error("delivery was acknowledged after persistence failure")
 	}
 }
 
@@ -145,7 +197,7 @@ func TestWorkerRunStopError(t *testing.T) {
 		stop: func() error { return stopError },
 	}
 
-	err := New(consumer, discardLogger()).Run(ctx)
+	err := New(consumer, &writerStub{}, discardLogger()).Run(ctx)
 	if !errors.Is(err, stopError) {
 		t.Fatalf("Run() error = %v, want wrapped stop error", err)
 	}
@@ -174,6 +226,17 @@ type consumerStub struct {
 	mu           sync.Mutex
 	receiveCalls int
 	stopCalls    int
+}
+
+type writerStub struct {
+	insert func(context.Context, event.Event) error
+}
+
+func (w *writerStub) Insert(ctx context.Context, applicationEvent event.Event) error {
+	if w.insert == nil {
+		return nil
+	}
+	return w.insert(ctx, applicationEvent)
 }
 
 func (c *consumerStub) Receive(ctx context.Context) (Delivery, error) {

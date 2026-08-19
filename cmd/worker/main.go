@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	clickhouseinfra "github.com/DenisKorendiasev/app-analytics-platform/internal/clickhouse"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/config"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/rabbitmq"
 	workerapp "github.com/DenisKorendiasev/app-analytics-platform/internal/worker"
@@ -27,6 +28,26 @@ func run() int {
 	signalContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	analyticsStore, err := clickhouseinfra.Open(signalContext, clickhouseinfra.Config{
+		Host:     cfg.ClickHouse.Host,
+		Port:     cfg.ClickHouse.Port,
+		Database: cfg.ClickHouse.Database,
+		User:     cfg.ClickHouse.User,
+		Password: cfg.ClickHouse.Password,
+	})
+	if err != nil {
+		logger.Error("connect to ClickHouse", "error", err)
+		return 1
+	}
+	defer func() {
+		if err := analyticsStore.Close(); err != nil {
+			logger.Error("close ClickHouse connection", "error", err)
+			return
+		}
+		logger.Info("ClickHouse connection closed")
+	}()
+	logger.Info("connected to ClickHouse", "host", cfg.ClickHouse.Host, "port", cfg.ClickHouse.Port)
+
 	consumer, err := rabbitmq.NewConsumer(signalContext, rabbitmq.Config{
 		URL:        cfg.RabbitMQ.URL,
 		Exchange:   cfg.RabbitMQ.Exchange,
@@ -45,7 +66,8 @@ func run() int {
 		logger.Info("RabbitMQ consumer closed")
 	}()
 
-	applicationWorker := workerapp.New(consumer, logger)
+	eventRepository := clickhouseinfra.NewEventRepository(analyticsStore)
+	applicationWorker := workerapp.New(consumer, eventRepository, logger)
 	logger.Info("Worker started", "queue", cfg.RabbitMQ.Queue)
 	if err := applicationWorker.Run(signalContext); err != nil {
 		logger.Error("Worker stopped", "error", err)

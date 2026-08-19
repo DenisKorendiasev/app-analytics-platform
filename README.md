@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 008 adds ClickHouse infrastructure:
+Increment 009 completes the first event write chain from the API to ClickHouse:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -33,9 +33,13 @@ Increment 008 adds ClickHouse infrastructure:
 - environment-based ClickHouse connection settings;
 - a native ClickHouse connection pool with verified startup and clean lifecycle;
 - reversible `events` table migrations;
-- a ClickHouse Event repository with single-event insertion.
+- a ClickHouse Event repository with single-event insertion;
+- Worker persistence of each consumed event in ClickHouse;
+- RabbitMQ acknowledgement only after a successful ClickHouse insert;
+- unacknowledged delivery on ClickHouse persistence failure;
+- graceful Worker shutdown that finishes an in-flight ClickHouse insert.
 
-Worker-to-ClickHouse persistence, analytics APIs, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
+Analytics APIs, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
 
 ## Requirements
 
@@ -107,7 +111,7 @@ Start the Worker in another terminal:
 go run ./cmd/worker
 ```
 
-The Worker subscribes to `app.events`, logs each decoded event as structured JSON, and acknowledges it after the current log-only processing completes.
+The Worker subscribes to `app.events`, inserts each decoded event into ClickHouse, logs the successful persistence as structured JSON, and only then acknowledges the RabbitMQ delivery. A ClickHouse error stops the Worker without acknowledging the failed delivery; RabbitMQ requeues it when the consumer connection closes. Retry and DLQ policies are intentionally deferred.
 
 Check the service:
 
@@ -161,10 +165,10 @@ Run the complete Event ingestion integration test against both services:
 POSTGRES_INTEGRATION_TEST=1 RABBITMQ_INTEGRATION_TEST=1 go test ./internal/event -v
 ```
 
-Run the Worker publish/receive/log/ack integration test while RabbitMQ is healthy:
+Run the Worker publish/persist/ack end-to-end integration test while RabbitMQ and ClickHouse are healthy:
 
 ```bash
-RABBITMQ_INTEGRATION_TEST=1 go test ./internal/worker -v
+RABBITMQ_INTEGRATION_TEST=1 CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/worker -v
 ```
 
 Run the isolated ClickHouse migration/insert/select/down integration test while ClickHouse is healthy:

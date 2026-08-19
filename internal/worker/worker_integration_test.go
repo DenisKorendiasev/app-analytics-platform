@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	clickhouseinfra "github.com/DenisKorendiasev/app-analytics-platform/internal/clickhouse"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/config"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/event"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/rabbitmq"
@@ -17,9 +20,9 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func TestWorkerReceivesPublishedEvent(t *testing.T) {
-	if os.Getenv("RABBITMQ_INTEGRATION_TEST") != "1" {
-		t.Skip("set RABBITMQ_INTEGRATION_TEST=1 to run the Worker integration test")
+func TestWorkerPersistsPublishedEvent(t *testing.T) {
+	if os.Getenv("RABBITMQ_INTEGRATION_TEST") != "1" || os.Getenv("CLICKHOUSE_INTEGRATION_TEST") != "1" {
+		t.Skip("set RABBITMQ_INTEGRATION_TEST=1 and CLICKHOUSE_INTEGRATION_TEST=1 to run the Worker integration test")
 	}
 
 	applicationConfig, err := config.Load()
@@ -33,8 +36,9 @@ func TestWorkerReceivesPublishedEvent(t *testing.T) {
 		Queue:      "app.events.worker.test." + testID,
 		RoutingKey: "app.events.worker.test",
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	clickHouseConnection := openWorkerTestClickHouse(t, ctx, applicationConfig.ClickHouse)
 
 	consumer, err := rabbitmq.NewConsumer(ctx, rabbitConfig)
 	if err != nil {
@@ -84,7 +88,7 @@ func TestWorkerReceivesPublishedEvent(t *testing.T) {
 	workerContext, stopWorker := context.WithCancel(ctx)
 	workerResult := make(chan error, 1)
 	go func() {
-		workerResult <- worker.New(consumer, logger).Run(workerContext)
+		workerResult <- worker.New(consumer, clickhouseinfra.NewEventRepository(clickHouseConnection), logger).Run(workerContext)
 	}()
 
 	want := integrationEvent()
@@ -95,9 +99,12 @@ func TestWorkerReceivesPublishedEvent(t *testing.T) {
 	select {
 	case record := <-records:
 		assertEventRecord(t, record, want)
+	case err := <-workerResult:
+		t.Fatalf("Worker stopped before persisting the event: %v", err)
 	case <-ctx.Done():
-		t.Fatalf("wait for Worker log: %v", ctx.Err())
+		t.Fatalf("wait for Worker persistence: %v", ctx.Err())
 	}
+	assertPersistedEvent(t, ctx, clickHouseConnection, want)
 	stopWorker()
 	select {
 	case err := <-workerResult:
@@ -131,15 +138,15 @@ func integrationEvent() event.Event {
 		Country:      "RS",
 		Platform:     event.PlatformAndroid,
 		RevenueCents: 999,
-		Timestamp:    time.Date(2026, time.August, 18, 12, 35, 2, 0, time.UTC),
+		Timestamp:    time.Date(2026, time.August, 18, 12, 35, 2, 123000000, time.UTC),
 	}
 }
 
 func assertEventRecord(t *testing.T, record slog.Record, want event.Event) {
 	t.Helper()
 
-	if record.Message != "event received" {
-		t.Errorf("log message = %q, want event received", record.Message)
+	if record.Message != "event persisted" {
+		t.Errorf("log message = %q, want event persisted", record.Message)
 	}
 	attributes := make(map[string]string)
 	record.Attrs(func(attribute slog.Attr) bool {
@@ -171,7 +178,7 @@ func (h *captureHandler) Enabled(context.Context, slog.Level) bool {
 }
 
 func (h *captureHandler) Handle(_ context.Context, record slog.Record) error {
-	if record.Message == "event received" {
+	if record.Message == "event persisted" {
 		h.records <- record.Clone()
 	}
 	return nil
@@ -183,4 +190,104 @@ func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler {
 
 func (h *captureHandler) WithGroup(string) slog.Handler {
 	return h
+}
+
+func openWorkerTestClickHouse(t *testing.T, ctx context.Context, cfg config.ClickHouseConfig) driver.Conn {
+	t.Helper()
+
+	adminConfig := workerClickHouseConfig(cfg)
+	adminConfig.Database = "default"
+	adminConnection, err := clickhouseinfra.Open(ctx, adminConfig)
+	if err != nil {
+		t.Fatalf("open ClickHouse admin connection: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := adminConnection.Close(); err != nil {
+			t.Errorf("close ClickHouse admin connection: %v", err)
+		}
+	})
+
+	databaseName := "worker_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if err := adminConnection.Exec(ctx, "CREATE DATABASE "+databaseName); err != nil {
+		t.Fatalf("create ClickHouse test database: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		if err := adminConnection.Exec(cleanupContext, "DROP DATABASE IF EXISTS "+databaseName+" SYNC"); err != nil {
+			t.Errorf("drop ClickHouse test database: %v", err)
+		}
+	})
+
+	testConfig := workerClickHouseConfig(cfg)
+	testConfig.Database = databaseName
+	connection, err := clickhouseinfra.Open(ctx, testConfig)
+	if err != nil {
+		t.Fatalf("open ClickHouse test connection: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("close ClickHouse test connection: %v", err)
+		}
+	})
+
+	migration, err := os.ReadFile("../../migrations/clickhouse/000001_create_events.up.sql")
+	if err != nil {
+		t.Fatalf("read ClickHouse migration: %v", err)
+	}
+	if err := connection.Exec(ctx, string(migration)); err != nil {
+		t.Fatalf("apply ClickHouse migration: %v", err)
+	}
+	return connection
+}
+
+func workerClickHouseConfig(cfg config.ClickHouseConfig) clickhouseinfra.Config {
+	return clickhouseinfra.Config{
+		Host:     cfg.Host,
+		Port:     cfg.Port,
+		Database: cfg.Database,
+		User:     cfg.User,
+		Password: cfg.Password,
+	}
+}
+
+func assertPersistedEvent(t *testing.T, ctx context.Context, connection driver.Conn, want event.Event) {
+	t.Helper()
+
+	const query = `
+		SELECT event_id, app_id, event_type, country, platform, revenue_cents, timestamp
+		FROM events
+		WHERE event_id = ?`
+	var (
+		gotEventID      uuid.UUID
+		gotAppID        uuid.UUID
+		gotEventType    string
+		gotCountry      string
+		gotPlatform     string
+		gotRevenueCents int64
+		gotTimestamp    time.Time
+	)
+	if err := connection.QueryRow(ctx, query, want.EventID).Scan(
+		&gotEventID,
+		&gotAppID,
+		&gotEventType,
+		&gotCountry,
+		&gotPlatform,
+		&gotRevenueCents,
+		&gotTimestamp,
+	); err != nil {
+		t.Fatalf("select persisted event: %v", err)
+	}
+	got := event.Event{
+		EventID:      gotEventID,
+		AppID:        gotAppID,
+		EventType:    event.Type(gotEventType),
+		Country:      gotCountry,
+		Platform:     event.Platform(gotPlatform),
+		RevenueCents: gotRevenueCents,
+		Timestamp:    gotTimestamp.UTC(),
+	}
+	if got != want {
+		t.Errorf("persisted event = %+v, want %+v", got, want)
+	}
 }
