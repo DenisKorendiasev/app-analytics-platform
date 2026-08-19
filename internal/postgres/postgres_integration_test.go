@@ -8,9 +8,17 @@ import (
 
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/config"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestOpen(t *testing.T) {
+	pool := openIntegrationPool(t)
+	pool.Close()
+}
+
+func openIntegrationPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
 	if os.Getenv("POSTGRES_INTEGRATION_TEST") != "1" {
 		t.Skip("set POSTGRES_INTEGRATION_TEST=1 to run the PostgreSQL integration test")
 	}
@@ -34,5 +42,5 @@ func TestOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open PostgreSQL pool: %v", err)
 	}
-	defer pool.Close()
+	return pool
 }
