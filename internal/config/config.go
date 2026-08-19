@@ -5,12 +5,19 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const (
-	defaultHTTPPort        = 8080
-	defaultShutdownTimeout = 10 * time.Second
+	defaultHTTPPort         = 8080
+	defaultShutdownTimeout  = 10 * time.Second
+	defaultPostgresHost     = "localhost"
+	defaultPostgresPort     = 5432
+	defaultPostgresDatabase = "app_analytics"
+	defaultPostgresUser     = "app_analytics"
+	defaultPostgresPassword = "app_analytics"
+	defaultPostgresSSLMode  = "disable"
 )
 
 // Config contains the runtime settings for the API server.
@@ -18,6 +25,17 @@ type Config struct {
 	HTTPPort        int
 	ShutdownTimeout time.Duration
 	LogLevel        slog.Level
+	Postgres        PostgresConfig
+}
+
+// PostgresConfig contains the settings required to connect to PostgreSQL.
+type PostgresConfig struct {
+	Host     string
+	Port     int
+	Database string
+	User     string
+	Password string
+	SSLMode  string
 }
 
 // Load reads configuration from the environment and applies safe local defaults.
@@ -26,6 +44,14 @@ func Load() (Config, error) {
 		HTTPPort:        defaultHTTPPort,
 		ShutdownTimeout: defaultShutdownTimeout,
 		LogLevel:        slog.LevelInfo,
+		Postgres: PostgresConfig{
+			Host:     defaultPostgresHost,
+			Port:     defaultPostgresPort,
+			Database: defaultPostgresDatabase,
+			User:     defaultPostgresUser,
+			Password: defaultPostgresPassword,
+			SSLMode:  defaultPostgresSSLMode,
+		},
 	}
 
 	if value := os.Getenv("HTTP_PORT"); value != "" {
@@ -52,5 +78,41 @@ func Load() (Config, error) {
 		cfg.LogLevel = level
 	}
 
+	if value := os.Getenv("POSTGRES_HOST"); value != "" {
+		cfg.Postgres.Host = value
+	}
+	if value := os.Getenv("POSTGRES_PORT"); value != "" {
+		port, err := strconv.Atoi(value)
+		if err != nil || port < 1 || port > 65535 {
+			return Config{}, fmt.Errorf("POSTGRES_PORT must be an integer between 1 and 65535")
+		}
+		cfg.Postgres.Port = port
+	}
+	if value := os.Getenv("POSTGRES_DB"); value != "" {
+		cfg.Postgres.Database = value
+	}
+	if value := os.Getenv("POSTGRES_USER"); value != "" {
+		cfg.Postgres.User = value
+	}
+	if value := os.Getenv("POSTGRES_PASSWORD"); value != "" {
+		cfg.Postgres.Password = value
+	}
+	if value := os.Getenv("POSTGRES_SSLMODE"); value != "" {
+		sslMode := strings.ToLower(value)
+		if !validSSLMode(sslMode) {
+			return Config{}, fmt.Errorf("POSTGRES_SSLMODE must be one of disable, allow, prefer, require, verify-ca or verify-full")
+		}
+		cfg.Postgres.SSLMode = sslMode
+	}
+
 	return cfg, nil
+}
+
+func validSSLMode(value string) bool {
+	switch value {
+	case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+		return true
+	default:
+		return false
+	}
 }

@@ -7,9 +7,7 @@ import (
 )
 
 func TestLoadDefaults(t *testing.T) {
-	t.Setenv("HTTP_PORT", "")
-	t.Setenv("SHUTDOWN_TIMEOUT", "")
-	t.Setenv("LOG_LEVEL", "")
+	clearEnvironment(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -25,12 +23,37 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("LogLevel = %s, want INFO", cfg.LogLevel)
 	}
+	if cfg.Postgres.Host != "localhost" {
+		t.Errorf("Postgres.Host = %q, want localhost", cfg.Postgres.Host)
+	}
+	if cfg.Postgres.Port != 5432 {
+		t.Errorf("Postgres.Port = %d, want 5432", cfg.Postgres.Port)
+	}
+	if cfg.Postgres.Database != "app_analytics" {
+		t.Errorf("Postgres.Database = %q, want app_analytics", cfg.Postgres.Database)
+	}
+	if cfg.Postgres.User != "app_analytics" {
+		t.Errorf("Postgres.User = %q, want app_analytics", cfg.Postgres.User)
+	}
+	if cfg.Postgres.Password != "app_analytics" {
+		t.Error("Postgres.Password does not match the local development default")
+	}
+	if cfg.Postgres.SSLMode != "disable" {
+		t.Errorf("Postgres.SSLMode = %q, want disable", cfg.Postgres.SSLMode)
+	}
 }
 
 func TestLoadFromEnvironment(t *testing.T) {
+	clearEnvironment(t)
 	t.Setenv("HTTP_PORT", "9090")
 	t.Setenv("SHUTDOWN_TIMEOUT", "3s")
 	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("POSTGRES_HOST", "postgres.internal")
+	t.Setenv("POSTGRES_PORT", "5433")
+	t.Setenv("POSTGRES_DB", "analytics_test")
+	t.Setenv("POSTGRES_USER", "test_user")
+	t.Setenv("POSTGRES_PASSWORD", "test_password")
+	t.Setenv("POSTGRES_SSLMODE", "REQUIRE")
 
 	cfg, err := Load()
 	if err != nil {
@@ -46,6 +69,24 @@ func TestLoadFromEnvironment(t *testing.T) {
 	if cfg.LogLevel != slog.LevelDebug {
 		t.Errorf("LogLevel = %s, want DEBUG", cfg.LogLevel)
 	}
+	if cfg.Postgres.Host != "postgres.internal" {
+		t.Errorf("Postgres.Host = %q, want postgres.internal", cfg.Postgres.Host)
+	}
+	if cfg.Postgres.Port != 5433 {
+		t.Errorf("Postgres.Port = %d, want 5433", cfg.Postgres.Port)
+	}
+	if cfg.Postgres.Database != "analytics_test" {
+		t.Errorf("Postgres.Database = %q, want analytics_test", cfg.Postgres.Database)
+	}
+	if cfg.Postgres.User != "test_user" {
+		t.Errorf("Postgres.User = %q, want test_user", cfg.Postgres.User)
+	}
+	if cfg.Postgres.Password != "test_password" {
+		t.Error("Postgres.Password does not match the environment value")
+	}
+	if cfg.Postgres.SSLMode != "require" {
+		t.Errorf("Postgres.SSLMode = %q, want require", cfg.Postgres.SSLMode)
+	}
 }
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
@@ -59,18 +100,37 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "invalid timeout", key: "SHUTDOWN_TIMEOUT", value: "soon"},
 		{name: "non-positive timeout", key: "SHUTDOWN_TIMEOUT", value: "0s"},
 		{name: "invalid log level", key: "LOG_LEVEL", value: "verbose"},
+		{name: "non-numeric postgres port", key: "POSTGRES_PORT", value: "postgres"},
+		{name: "postgres port out of range", key: "POSTGRES_PORT", value: "65536"},
+		{name: "invalid postgres ssl mode", key: "POSTGRES_SSLMODE", value: "sometimes"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("HTTP_PORT", "")
-			t.Setenv("SHUTDOWN_TIMEOUT", "")
-			t.Setenv("LOG_LEVEL", "")
+			clearEnvironment(t)
 			t.Setenv(tt.key, tt.value)
 
 			if _, err := Load(); err == nil {
 				t.Fatal("Load() error = nil, want an error")
 			}
 		})
+	}
+}
+
+func clearEnvironment(t *testing.T) {
+	t.Helper()
+
+	for _, key := range []string{
+		"HTTP_PORT",
+		"SHUTDOWN_TIMEOUT",
+		"LOG_LEVEL",
+		"POSTGRES_HOST",
+		"POSTGRES_PORT",
+		"POSTGRES_DB",
+		"POSTGRES_USER",
+		"POSTGRES_PASSWORD",
+		"POSTGRES_SSLMODE",
+	} {
+		t.Setenv(key, "")
 	}
 }
