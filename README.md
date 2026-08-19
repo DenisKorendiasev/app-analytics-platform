@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 010 adds application statistics backed by ClickHouse:
+Increment 011 adds application rankings backed by ClickHouse:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -40,9 +40,11 @@ Increment 010 adds application statistics backed by ClickHouse:
 - graceful Worker shutdown that finishes an in-flight ClickHouse insert;
 - a ClickHouse connection integrated into the API lifecycle;
 - `GET /api/v1/apps/{id}/stats` with event counts and purchase revenue;
-- optional `from`, `to`, `country`, and `platform` statistics filters.
+- optional `from`, `to`, `country`, and `platform` statistics filters;
+- `GET /api/v1/rankings` ordered by install count;
+- optional ranking filters and a bounded result limit.
 
-Rankings, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
+Additional ranking metrics, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
 
 ## Requirements
 
@@ -168,6 +170,28 @@ Example response:
 
 `from` and `to` use `YYYY-MM-DD` in UTC. Both dates are inclusive; internally the upper bound is the beginning of the following day. `platform`, when present, must be `android` or `ios`. An application with no matching events returns zero metrics.
 
+Get application rankings from ClickHouse:
+
+```bash
+curl 'http://localhost:8080/api/v1/rankings?metric=installs&country=RS&from=2026-08-01&to=2026-08-18&limit=10'
+```
+
+Example response:
+
+```json
+{
+  "metric": "installs",
+  "rankings": [
+    {
+      "app_id": "b8edbe8d-4fa6-42fd-a351-9a98d17d8b83",
+      "value": 12543
+    }
+  ]
+}
+```
+
+The only supported metric in this increment is `installs`; omitting `metric` selects it by default. Rankings are ordered by value descending and then by application ID ascending for deterministic ties. `limit` defaults to `10` and accepts values from `1` to `100`. Date filtering uses the same inclusive UTC semantics as the Statistics API. Applications without matching installs are omitted.
+
 Stop the process with `Ctrl+C`; the server will stop accepting new connections and wait for active requests to complete.
 
 Run the PostgreSQL integration tests while the Compose service is healthy. The repository test applies the up migration and verifies the down migration:
@@ -194,7 +218,7 @@ Run the Worker publish/persist/ack end-to-end integration test while RabbitMQ an
 RABBITMQ_INTEGRATION_TEST=1 CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/worker -v
 ```
 
-Run the isolated ClickHouse repository integration tests, including statistics aggregates and filters, while ClickHouse is healthy:
+Run the isolated ClickHouse repository integration tests, including statistics and rankings queries, while ClickHouse is healthy:
 
 ```bash
 CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/clickhouse -v

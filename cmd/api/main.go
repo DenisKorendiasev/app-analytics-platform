@@ -100,11 +100,15 @@ func run() int {
 	statisticsRepository := clickhouseinfra.NewStatisticsRepository(analyticsStore)
 	statisticsService := analytics.NewService(statisticsRepository)
 	statisticsHandler := analytics.NewHandler(statisticsService, logger)
+	rankingsRepository := clickhouseinfra.NewRankingsRepository(analyticsStore)
+	rankingsService := analytics.NewRankingsService(rankingsRepository)
+	rankingsHandler := analytics.NewRankingsHandler(rankingsService, logger)
 
 	server := httpserver.New(fmt.Sprintf(":%d", cfg.HTTPPort), logger, func(mux *http.ServeMux) {
 		appHandler.RegisterRoutes(mux)
 		eventHandler.RegisterRoutes(mux)
 		statisticsHandler.RegisterRoutes(mux)
+		rankingsHandler.RegisterRoutes(mux)
 	})
 	serverError := make(chan error, 1)
 	go func() {
