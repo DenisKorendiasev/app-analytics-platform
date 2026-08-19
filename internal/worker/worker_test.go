@@ -23,6 +23,12 @@ func TestWorkerProductionBatchSettings(t *testing.T) {
 	if BatchTimeout != time.Second {
 		t.Errorf("BatchTimeout = %s, want 1s", BatchTimeout)
 	}
+	if MaxInsertAttempts != 3 {
+		t.Errorf("MaxInsertAttempts = %d, want 3", MaxInsertAttempts)
+	}
+	if InsertRetryBackoff != 100*time.Millisecond {
+		t.Errorf("InsertRetryBackoff = %s, want 100ms", InsertRetryBackoff)
+	}
 }
 
 func TestWorkerFlushesImmediatelyAtBatchSize(t *testing.T) {
@@ -95,23 +101,110 @@ func TestWorkerFlushesPartialBatchOnTimeout(t *testing.T) {
 	}
 }
 
-func TestWorkerPersistenceErrorDoesNotAcknowledgeBatch(t *testing.T) {
+func TestWorkerExhaustedPersistenceRetriesDeadLetterBatch(t *testing.T) {
 	persistError := errors.New("ClickHouse unavailable")
+	rejectError := errors.New("reject failed")
 	var acknowledged atomic.Int64
-	consumer := newSequenceConsumer(testDeliveries(2, func() error {
+	var rejected atomic.Int64
+	deliveries := testDeliveries(2, func() error {
 		acknowledged.Add(1)
 		return nil
-	}), nil)
+	})
+	for index := range deliveries {
+		deliveries[index].Reject = func() error {
+			if rejected.Add(1) == 1 {
+				return rejectError
+			}
+			return nil
+		}
+	}
+	consumer := newSequenceConsumer(deliveries, nil)
 	writer := &writerStub{insertBatch: func(context.Context, []event.Event) error {
 		return persistError
 	}}
 
-	err := newWorker(consumer, writer, discardLogger(), 2, time.Hour).Run(context.Background())
+	err := newWorkerWithRetry(consumer, writer, discardLogger(), 2, time.Hour, 3, 0).Run(context.Background())
 	if !errors.Is(err, persistError) {
 		t.Fatalf("Run() error = %v, want wrapped persistence error", err)
 	}
+	if !errors.Is(err, rejectError) {
+		t.Fatalf("Run() error = %v, want wrapped rejection error", err)
+	}
+	if writer.callCount() != 3 {
+		t.Errorf("InsertBatch() calls = %d, want 3", writer.callCount())
+	}
 	if acknowledged.Load() != 0 {
 		t.Errorf("acknowledged deliveries = %d, want 0", acknowledged.Load())
+	}
+	if rejected.Load() != 2 {
+		t.Errorf("rejected deliveries = %d, want 2", rejected.Load())
+	}
+}
+
+func TestWorkerRetriesTransientPersistenceError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var acknowledged atomic.Int64
+	var rejected atomic.Int64
+	deliveries := testDeliveries(2, func() error {
+		acknowledged.Add(1)
+		return nil
+	})
+	for index := range deliveries {
+		deliveries[index].Reject = func() error {
+			rejected.Add(1)
+			return nil
+		}
+	}
+	consumer := newSequenceConsumer(deliveries, nil)
+	transientError := errors.New("temporary ClickHouse error")
+	var attempts atomic.Int64
+	writer := &writerStub{insertBatch: func(context.Context, []event.Event) error {
+		if attempts.Add(1) < 3 {
+			return transientError
+		}
+		cancel()
+		return nil
+	}}
+
+	err := newWorkerWithRetry(consumer, writer, discardLogger(), 2, time.Hour, 3, 0).Run(ctx)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if attempts.Load() != 3 {
+		t.Errorf("InsertBatch() attempts = %d, want 3", attempts.Load())
+	}
+	if acknowledged.Load() != 2 {
+		t.Errorf("acknowledged deliveries = %d, want 2", acknowledged.Load())
+	}
+	if rejected.Load() != 0 {
+		t.Errorf("rejected deliveries = %d, want 0", rejected.Load())
+	}
+}
+
+func TestWorkerDeduplicatesEventIDsWithinBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var acknowledged atomic.Int64
+	deliveries := testDeliveries(2, func() error {
+		acknowledged.Add(1)
+		return nil
+	})
+	deliveries[1].Event = deliveries[0].Event
+	consumer := newSequenceConsumer(deliveries, nil)
+	writer := &writerStub{insertBatch: func(_ context.Context, events []event.Event) error {
+		if len(events) != 1 {
+			t.Errorf("unique event count = %d, want 1", len(events))
+		}
+		cancel()
+		return nil
+	}}
+
+	if err := newWorkerWithRetry(consumer, writer, discardLogger(), 2, time.Hour, 3, 0).Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if acknowledged.Load() != 2 {
+		t.Errorf("acknowledged deliveries = %d, want 2", acknowledged.Load())
 	}
 }
 
@@ -206,8 +299,9 @@ func testDeliveries(count int, ack func() error) []Delivery {
 	deliveries := make([]Delivery, count)
 	for index := range deliveries {
 		deliveries[index] = Delivery{
-			Event: testEvent(index),
-			Ack:   ack,
+			Event:  testEvent(index),
+			Ack:    ack,
+			Reject: func() error { return nil },
 		}
 	}
 	return deliveries

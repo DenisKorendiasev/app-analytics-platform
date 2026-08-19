@@ -3,6 +3,7 @@ package event
 import "errors"
 
 var (
+	ErrEventIDRequired        = errors.New("event id is required")
 	ErrAppIDRequired          = errors.New("app id is required")
 	ErrEventTypeInvalid       = errors.New("event type must be install, session, or purchase")
 	ErrCountryRequired        = errors.New("country is required")

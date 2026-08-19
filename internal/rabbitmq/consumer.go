@@ -69,31 +69,58 @@ func NewConsumer(ctx context.Context, cfg Config) (*Consumer, error) {
 
 // Receive waits for and decodes the next RabbitMQ event delivery.
 func (c *Consumer) Receive(ctx context.Context) (worker.Delivery, error) {
-	if err := ctx.Err(); err != nil {
-		return worker.Delivery{}, err
-	}
-	select {
-	case <-ctx.Done():
-		return worker.Delivery{}, ctx.Err()
-	case delivery, ok := <-c.deliveries:
-		if !ok {
-			return worker.Delivery{}, errors.New("RabbitMQ delivery channel is closed")
+	for {
+		if err := ctx.Err(); err != nil {
+			return worker.Delivery{}, err
 		}
+		select {
+		case <-ctx.Done():
+			return worker.Delivery{}, ctx.Err()
+		case delivery, ok := <-c.deliveries:
+			if !ok {
+				return worker.Delivery{}, errors.New("RabbitMQ delivery channel is closed")
+			}
 
-		var applicationEvent event.Event
-		if err := json.Unmarshal(delivery.Body, &applicationEvent); err != nil {
-			return worker.Delivery{}, fmt.Errorf("decode RabbitMQ event: %w", err)
-		}
-		return worker.Delivery{
-			Event: applicationEvent,
-			Ack: func() error {
-				if err := delivery.Ack(false); err != nil {
-					return fmt.Errorf("ack RabbitMQ delivery: %w", err)
+			var applicationEvent event.Event
+			if err := json.Unmarshal(delivery.Body, &applicationEvent); err != nil {
+				if rejectError := rejectDelivery(delivery); rejectError != nil {
+					return worker.Delivery{}, errors.Join(
+						fmt.Errorf("decode RabbitMQ event: %w", err),
+						rejectError,
+					)
 				}
-				return nil
-			},
-		}, nil
+				continue
+			}
+			if err := event.Validate(applicationEvent); err != nil {
+				if rejectError := rejectDelivery(delivery); rejectError != nil {
+					return worker.Delivery{}, errors.Join(
+						fmt.Errorf("validate RabbitMQ event: %w", err),
+						rejectError,
+					)
+				}
+				continue
+			}
+			return worker.Delivery{
+				Event: applicationEvent,
+				Ack: func() error {
+					if err := delivery.Ack(false); err != nil {
+						return fmt.Errorf("ack RabbitMQ delivery: %w", err)
+					}
+					return nil
+				},
+				Reject: func() error {
+					return rejectDelivery(delivery)
+				},
+			}, nil
+		}
 	}
+}
+
+func rejectDelivery(delivery amqp.Delivery) error {
+	if err := delivery.Reject(false); err != nil {
+		return fmt.Errorf("reject RabbitMQ delivery without requeue: %w", err)
+	}
+	return nil
 }
 
 // Stop cancels the subscription so RabbitMQ sends no new deliveries.

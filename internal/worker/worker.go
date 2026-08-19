@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/event"
+	"github.com/google/uuid"
 )
 
 const (
@@ -16,12 +17,17 @@ const (
 	BatchSize = 500
 	// BatchTimeout is the maximum wait after the first delivery in a batch.
 	BatchTimeout = time.Second
+	// MaxInsertAttempts bounds retries before a batch is dead-lettered.
+	MaxInsertAttempts = 3
+	// InsertRetryBackoff is the initial delay between ClickHouse insert attempts.
+	InsertRetryBackoff = 100 * time.Millisecond
 )
 
 // Delivery contains a received Event and its acknowledgement operation.
 type Delivery struct {
-	Event event.Event
-	Ack   func() error
+	Event  event.Event
+	Ack    func() error
+	Reject func() error
 }
 
 // Consumer provides RabbitMQ deliveries to the Worker.
@@ -37,11 +43,13 @@ type EventWriter interface {
 
 // Worker receives and persists application events in batches.
 type Worker struct {
-	consumer     Consumer
-	writer       EventWriter
-	logger       *slog.Logger
-	batchSize    int
-	batchTimeout time.Duration
+	consumer           Consumer
+	writer             EventWriter
+	logger             *slog.Logger
+	batchSize          int
+	batchTimeout       time.Duration
+	maxInsertAttempts  int
+	insertRetryBackoff time.Duration
 }
 
 // New creates a Worker with the production batch size and timeout.
@@ -50,12 +58,26 @@ func New(consumer Consumer, writer EventWriter, logger *slog.Logger) *Worker {
 }
 
 func newWorker(consumer Consumer, writer EventWriter, logger *slog.Logger, batchSize int, batchTimeout time.Duration) *Worker {
+	return newWorkerWithRetry(consumer, writer, logger, batchSize, batchTimeout, MaxInsertAttempts, InsertRetryBackoff)
+}
+
+func newWorkerWithRetry(
+	consumer Consumer,
+	writer EventWriter,
+	logger *slog.Logger,
+	batchSize int,
+	batchTimeout time.Duration,
+	maxInsertAttempts int,
+	insertRetryBackoff time.Duration,
+) *Worker {
 	return &Worker{
-		consumer:     consumer,
-		writer:       writer,
-		logger:       logger,
-		batchSize:    batchSize,
-		batchTimeout: batchTimeout,
+		consumer:           consumer,
+		writer:             writer,
+		logger:             logger,
+		batchSize:          batchSize,
+		batchTimeout:       batchTimeout,
+		maxInsertAttempts:  maxInsertAttempts,
+		insertRetryBackoff: insertRetryBackoff,
 	}
 }
 
@@ -169,12 +191,36 @@ func (w *Worker) flush(ctx context.Context, batch []Delivery) error {
 		return nil
 	}
 
-	events := make([]event.Event, len(batch))
-	for index, delivery := range batch {
-		events[index] = delivery.Event
+	events := make([]event.Event, 0, len(batch))
+	seenEventIDs := make(map[uuid.UUID]struct{}, len(batch))
+	for _, delivery := range batch {
+		if _, duplicate := seenEventIDs[delivery.Event.EventID]; duplicate {
+			continue
+		}
+		seenEventIDs[delivery.Event.EventID] = struct{}{}
+		events = append(events, delivery.Event)
 	}
-	if err := w.writer.InsertBatch(ctx, events); err != nil {
-		return fmt.Errorf("persist event batch of %d: %w", len(batch), err)
+
+	var persistenceError error
+	attempts := 0
+	for attempt := 1; attempt <= w.maxInsertAttempts; attempt++ {
+		attempts = attempt
+		persistenceError = w.writer.InsertBatch(ctx, events)
+		if persistenceError == nil {
+			break
+		}
+		if attempt < w.maxInsertAttempts {
+			if err := waitForRetry(ctx, w.insertRetryBackoff*time.Duration(1<<(attempt-1))); err != nil {
+				persistenceError = errors.Join(persistenceError, err)
+				break
+			}
+		}
+	}
+	if persistenceError != nil {
+		return errors.Join(
+			fmt.Errorf("persist event batch of %d after %d attempts: %w", len(events), attempts, persistenceError),
+			rejectBatch(batch),
+		)
 	}
 
 	var acknowledgementError error
@@ -190,8 +236,33 @@ func (w *Worker) flush(ctx context.Context, batch []Delivery) error {
 		return acknowledgementError
 	}
 
-	w.logger.Info("event batch processed", "batch_size", len(batch))
+	w.logger.Info("event batch processed", "batch_size", len(batch), "unique_events", len(events))
 	return nil
+}
+
+func rejectBatch(batch []Delivery) error {
+	var result error
+	for _, delivery := range batch {
+		if delivery.Reject == nil {
+			result = errors.Join(result, fmt.Errorf("reject event %s: rejection operation is unavailable", delivery.Event.EventID))
+			continue
+		}
+		if err := delivery.Reject(); err != nil {
+			result = errors.Join(result, fmt.Errorf("reject event %s: %w", delivery.Event.EventID, err))
+		}
+	}
+	return result
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait before retry: %w", ctx.Err())
+	}
 }
 
 func stopConsumer(consumer Consumer) error {
