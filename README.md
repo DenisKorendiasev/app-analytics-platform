@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 013 containerizes the API and Worker:
+Increment 014 adds a Testcontainers integration test suite:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -48,9 +48,15 @@ Increment 013 containerizes the API and Worker:
 - a complete Docker Compose stack for PostgreSQL, RabbitMQ, ClickHouse, API, and Worker;
 - dependency health checks and ordered application startup;
 - automatic schema initialization for fresh PostgreSQL and ClickHouse volumes;
-- configurable host ports for isolated local stacks.
+- configurable host ports for isolated local stacks;
+- one tagged integration suite that starts PostgreSQL, RabbitMQ, and ClickHouse with Testcontainers;
+- isolated PostgreSQL schemas, ClickHouse databases, and RabbitMQ topologies for every test;
+- PostgreSQL repository create/read/existence, not-found, constraint, and migration coverage;
+- RabbitMQ publish, consume, persistence, and JSON message-format coverage;
+- ClickHouse single insert, batch insert, statistics, rankings, and migration coverage;
+- an end-to-end HTTP scenario from application creation and event ingestion through Worker processing to ClickHouse statistics.
 
-Additional ranking metrics, retry/DLQ policies, and testcontainers-based integration tests are intentionally outside this increment.
+Additional ranking metrics, retry/DLQ policies, synthetic data generation, and performance measurement are intentionally outside this increment.
 
 ## Requirements
 
@@ -222,35 +228,15 @@ Stop the containerized platform without deleting persisted data:
 docker compose down
 ```
 
-Run the PostgreSQL integration tests while the Compose service is healthy. The repository test applies the up migration and verifies the down migration:
+## Integration tests
+
+The integration suite requires a running Docker daemon, but it does not require the Compose stack or any integration-test environment variables. Testcontainers starts one PostgreSQL, RabbitMQ, and ClickHouse container for the suite and removes them afterward. Individual tests create isolated schemas, databases, and messaging topologies.
 
 ```bash
-POSTGRES_INTEGRATION_TEST=1 go test ./internal/postgres -v
+go test -tags=integration ./test/integration -v -count=1
 ```
 
-Run the RabbitMQ publish/consume integration test while RabbitMQ is healthy:
-
-```bash
-RABBITMQ_INTEGRATION_TEST=1 go test ./internal/rabbitmq -v
-```
-
-Run the complete Event ingestion integration test against both services:
-
-```bash
-POSTGRES_INTEGRATION_TEST=1 RABBITMQ_INTEGRATION_TEST=1 go test ./internal/event -v
-```
-
-Run the Worker publish/timeout-batch/ack end-to-end integration test while RabbitMQ and ClickHouse are healthy:
-
-```bash
-RABBITMQ_INTEGRATION_TEST=1 CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/worker -v
-```
-
-Run the isolated ClickHouse repository integration tests, including statistics and rankings queries, while ClickHouse is healthy:
-
-```bash
-CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/clickhouse -v
-```
+The `integration` build tag keeps the ordinary unit-test loop fast. The end-to-end test exercises the HTTP application and event handlers, PostgreSQL application repository, RabbitMQ publisher and consumer, Worker batching, ClickHouse event repository, and Statistics API in one scenario.
 
 ## Verify
 
@@ -259,6 +245,7 @@ go fmt ./...
 go vet ./...
 go test ./...
 go test -race ./...
+go test -tags=integration ./test/integration -v -count=1
 go build ./...
 docker build --target api -t app-analytics-api:local .
 docker build --target worker -t app-analytics-worker:local .
