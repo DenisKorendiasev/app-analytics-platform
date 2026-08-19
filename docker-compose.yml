@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-app_analytics}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app_analytics}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 2s
@@ -14,6 +14,7 @@ services:
       retries: 10
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./migrations/postgres/000001_create_apps.up.sql:/docker-entrypoint-initdb.d/000001_create_apps.sql:ro
 
   rabbitmq:
     image: rabbitmq:4-management-alpine
@@ -21,8 +22,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-app_analytics}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-app_analytics}
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "${RABBITMQ_HOST_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
@@ -32,15 +33,17 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
 
   clickhouse:
-    image: clickhouse/clickhouse-server:26.3-alpine
+    build:
+      context: .
+      target: clickhouse
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-app_analytics}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-app_analytics}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-app_analytics}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "${CLICKHOUSE_HTTP_HOST_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_HOST_PORT:-9000}:9000"
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1'"]
       interval: 5s
@@ -48,6 +51,69 @@ services:
       retries: 12
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      HTTP_PORT: 8080
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-app_analytics}
+      POSTGRES_USER: ${POSTGRES_USER:-app_analytics}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app_analytics}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-app_analytics}:${RABBITMQ_PASSWORD:-app_analytics}@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-app.events}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE:-app.events}
+      RABBITMQ_ROUTING_KEY: ${RABBITMQ_ROUTING_KEY:-app.events}
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-app_analytics}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-app_analytics}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-app_analytics}
+    ports:
+      - "${API_HOST_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    stop_grace_period: 15s
+
+  worker:
+    build:
+      context: .
+      target: worker
+    environment:
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-app_analytics}:${RABBITMQ_PASSWORD:-app_analytics}@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-app.events}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE:-app.events}
+      RABBITMQ_ROUTING_KEY: ${RABBITMQ_ROUTING_KEY:-app.events}
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-app_analytics}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-app_analytics}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-app_analytics}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    stop_grace_period: 15s
 
 volumes:
   postgres_data:
