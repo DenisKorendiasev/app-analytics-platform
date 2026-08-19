@@ -62,6 +62,7 @@ func (r *AppRepository) GetByID(ctx context.Context, id uuid.UUID) (app.App, err
 	if err != nil {
 		return app.App{}, fmt.Errorf("select app %s: %w", id, err)
 	}
+	application.CreatedAt = application.CreatedAt.UTC()
 	return application, nil
 }
 

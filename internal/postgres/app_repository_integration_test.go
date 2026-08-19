@@ -70,6 +70,9 @@ func TestAppRepository(t *testing.T) {
 	if got.ID != application.ID || got.Name != application.Name || got.Publisher != application.Publisher || got.Category != application.Category || !got.CreatedAt.Equal(application.CreatedAt) {
 		t.Errorf("GetByID() = %+v, want %+v", got, application)
 	}
+	if got.CreatedAt.Location() != time.UTC {
+		t.Errorf("GetByID() CreatedAt location = %s, want UTC", got.CreatedAt.Location())
+	}
 
 	exists, err := repository.Exists(ctx, application.ID)
 	if err != nil {

@@ -16,11 +16,11 @@ type Server struct {
 }
 
 // New creates an HTTP server with all routes registered.
-func New(address string, logger *slog.Logger) *Server {
+func New(address string, logger *slog.Logger, registerRoutes func(*http.ServeMux)) *Server {
 	return &Server{
 		httpServer: &http.Server{
 			Addr:              address,
-			Handler:           newHandler(logger),
+			Handler:           newHandler(logger, registerRoutes),
 			ReadHeaderTimeout: readHeaderTimeout,
 		},
 	}
@@ -40,7 +40,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-func newHandler(logger *slog.Logger) http.Handler {
+func newHandler(logger *slog.Logger, registerRoutes func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -49,5 +49,8 @@ func newHandler(logger *slog.Logger) http.Handler {
 			logger.Error("write health response", "error", err)
 		}
 	})
+	if registerRoutes != nil {
+		registerRoutes(mux)
+	}
 	return mux
 }

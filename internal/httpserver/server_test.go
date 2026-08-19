@@ -14,7 +14,7 @@ func TestHealth(t *testing.T) {
 	response := httptest.NewRecorder()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	newHandler(logger).ServeHTTP(response, request)
+	newHandler(logger, nil).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status code = %d, want %d", response.Code, http.StatusOK)
