@@ -9,7 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/DenisKorendiasev/app-analytics-platform/internal/analytics"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/app"
+	clickhouseinfra "github.com/DenisKorendiasev/app-analytics-platform/internal/clickhouse"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/config"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/event"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/httpserver"
@@ -70,15 +72,39 @@ func run() int {
 	}()
 	logger.Info("connected to RabbitMQ", "exchange", cfg.RabbitMQ.Exchange, "queue", cfg.RabbitMQ.Queue)
 
+	analyticsStore, err := clickhouseinfra.Open(signalContext, clickhouseinfra.Config{
+		Host:     cfg.ClickHouse.Host,
+		Port:     cfg.ClickHouse.Port,
+		Database: cfg.ClickHouse.Database,
+		User:     cfg.ClickHouse.User,
+		Password: cfg.ClickHouse.Password,
+	})
+	if err != nil {
+		logger.Error("connect to ClickHouse", "error", err)
+		return 1
+	}
+	defer func() {
+		if err := analyticsStore.Close(); err != nil {
+			logger.Error("close ClickHouse connection", "error", err)
+			return
+		}
+		logger.Info("ClickHouse connection closed")
+	}()
+	logger.Info("connected to ClickHouse", "host", cfg.ClickHouse.Host, "port", cfg.ClickHouse.Port)
+
 	appRepository := postgres.NewAppRepository(database)
 	appService := app.NewService(appRepository)
 	appHandler := app.NewHandler(appService, logger)
 	eventService := event.NewService(appRepository, eventPublisher)
 	eventHandler := event.NewHandler(eventService, logger)
+	statisticsRepository := clickhouseinfra.NewStatisticsRepository(analyticsStore)
+	statisticsService := analytics.NewService(statisticsRepository)
+	statisticsHandler := analytics.NewHandler(statisticsService, logger)
 
 	server := httpserver.New(fmt.Sprintf(":%d", cfg.HTTPPort), logger, func(mux *http.ServeMux) {
 		appHandler.RegisterRoutes(mux)
 		eventHandler.RegisterRoutes(mux)
+		statisticsHandler.RegisterRoutes(mux)
 	})
 	serverError := make(chan error, 1)
 	go func() {
