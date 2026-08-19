@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -10,14 +11,18 @@ import (
 )
 
 const (
-	defaultHTTPPort         = 8080
-	defaultShutdownTimeout  = 10 * time.Second
-	defaultPostgresHost     = "localhost"
-	defaultPostgresPort     = 5432
-	defaultPostgresDatabase = "app_analytics"
-	defaultPostgresUser     = "app_analytics"
-	defaultPostgresPassword = "app_analytics"
-	defaultPostgresSSLMode  = "disable"
+	defaultHTTPPort           = 8080
+	defaultShutdownTimeout    = 10 * time.Second
+	defaultPostgresHost       = "localhost"
+	defaultPostgresPort       = 5432
+	defaultPostgresDatabase   = "app_analytics"
+	defaultPostgresUser       = "app_analytics"
+	defaultPostgresPassword   = "app_analytics"
+	defaultPostgresSSLMode    = "disable"
+	defaultRabbitMQURL        = "amqp://app_analytics:app_analytics@localhost:5672/"
+	defaultRabbitMQExchange   = "app.events"
+	defaultRabbitMQQueue      = "app.events"
+	defaultRabbitMQRoutingKey = "app.events"
 )
 
 // Config contains the runtime settings for the API server.
@@ -26,6 +31,15 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	LogLevel        slog.Level
 	Postgres        PostgresConfig
+	RabbitMQ        RabbitMQConfig
+}
+
+// RabbitMQConfig contains the settings required to connect to RabbitMQ.
+type RabbitMQConfig struct {
+	URL        string
+	Exchange   string
+	Queue      string
+	RoutingKey string
 }
 
 // PostgresConfig contains the settings required to connect to PostgreSQL.
@@ -51,6 +65,12 @@ func Load() (Config, error) {
 			User:     defaultPostgresUser,
 			Password: defaultPostgresPassword,
 			SSLMode:  defaultPostgresSSLMode,
+		},
+		RabbitMQ: RabbitMQConfig{
+			URL:        defaultRabbitMQURL,
+			Exchange:   defaultRabbitMQExchange,
+			Queue:      defaultRabbitMQQueue,
+			RoutingKey: defaultRabbitMQRoutingKey,
 		},
 	}
 
@@ -103,6 +123,23 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("POSTGRES_SSLMODE must be one of disable, allow, prefer, require, verify-ca or verify-full")
 		}
 		cfg.Postgres.SSLMode = sslMode
+	}
+
+	if value := os.Getenv("RABBITMQ_URL"); value != "" {
+		parsedURL, err := url.Parse(value)
+		if err != nil || (parsedURL.Scheme != "amqp" && parsedURL.Scheme != "amqps") || parsedURL.Hostname() == "" {
+			return Config{}, fmt.Errorf("RABBITMQ_URL must be a valid amqp or amqps URL")
+		}
+		cfg.RabbitMQ.URL = value
+	}
+	if value := os.Getenv("RABBITMQ_EXCHANGE"); value != "" {
+		cfg.RabbitMQ.Exchange = value
+	}
+	if value := os.Getenv("RABBITMQ_QUEUE"); value != "" {
+		cfg.RabbitMQ.Queue = value
+	}
+	if value := os.Getenv("RABBITMQ_ROUTING_KEY"); value != "" {
+		cfg.RabbitMQ.RoutingKey = value
 	}
 
 	return cfg, nil
