@@ -3,6 +3,7 @@ package rabbitmq_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/config"
+	"github.com/DenisKorendiasev/app-analytics-platform/internal/event"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/rabbitmq"
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -78,8 +80,20 @@ func TestPublisher(t *testing.T) {
 		t.Fatalf("start consumer: %v", err)
 	}
 
-	payload := []byte(`{"event_id":"785fe217-b25a-43bb-afac-aa94a4108959"}`)
-	if err := publisher.Publish(ctx, payload); err != nil {
+	applicationEvent := event.Event{
+		EventID:      uuid.MustParse("785fe217-b25a-43bb-afac-aa94a4108959"),
+		AppID:        uuid.MustParse("b8edbe8d-4fa6-42fd-a351-9a98d17d8b83"),
+		EventType:    event.TypePurchase,
+		Country:      "RS",
+		Platform:     event.PlatformAndroid,
+		RevenueCents: 999,
+		Timestamp:    time.Date(2026, time.August, 18, 12, 35, 2, 0, time.UTC),
+	}
+	payload, err := json.Marshal(applicationEvent)
+	if err != nil {
+		t.Fatalf("marshal expected event: %v", err)
+	}
+	if err := publisher.Publish(ctx, applicationEvent); err != nil {
 		t.Fatalf("Publish() error = %v", err)
 	}
 
@@ -107,7 +121,7 @@ func TestPublisher(t *testing.T) {
 	if err := publisher.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if err := publisher.Publish(ctx, payload); err == nil {
+	if err := publisher.Publish(ctx, applicationEvent); err == nil {
 		t.Error("Publish() after Close() error = nil, want an error")
 	}
 }
