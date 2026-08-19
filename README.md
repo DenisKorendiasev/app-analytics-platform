@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 009 completes the first event write chain from the API to ClickHouse:
+Increment 010 adds application statistics backed by ClickHouse:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -37,9 +37,12 @@ Increment 009 completes the first event write chain from the API to ClickHouse:
 - Worker persistence of each consumed event in ClickHouse;
 - RabbitMQ acknowledgement only after a successful ClickHouse insert;
 - unacknowledged delivery on ClickHouse persistence failure;
-- graceful Worker shutdown that finishes an in-flight ClickHouse insert.
+- graceful Worker shutdown that finishes an in-flight ClickHouse insert;
+- a ClickHouse connection integrated into the API lifecycle;
+- `GET /api/v1/apps/{id}/stats` with event counts and purchase revenue;
+- optional `from`, `to`, `country`, and `platform` statistics filters.
 
-Analytics APIs, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
+Rankings, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
 
 ## Requirements
 
@@ -145,6 +148,26 @@ curl -i -X POST http://localhost:8080/api/v1/events \
 
 Supported event types are `install`, `session`, and `purchase`. Supported platforms are `android` and `ios`. Purchase revenue must be a non-negative integer number of cents.
 
+Get application statistics from ClickHouse:
+
+```bash
+curl 'http://localhost:8080/api/v1/apps/<app-id>/stats?from=2026-08-01&to=2026-08-18&country=RS&platform=android'
+```
+
+Example response:
+
+```json
+{
+  "app_id": "b8edbe8d-4fa6-42fd-a351-9a98d17d8b83",
+  "installs": 12543,
+  "sessions": 98421,
+  "purchases": 741,
+  "revenue_cents": 839231
+}
+```
+
+`from` and `to` use `YYYY-MM-DD` in UTC. Both dates are inclusive; internally the upper bound is the beginning of the following day. `platform`, when present, must be `android` or `ios`. An application with no matching events returns zero metrics.
+
 Stop the process with `Ctrl+C`; the server will stop accepting new connections and wait for active requests to complete.
 
 Run the PostgreSQL integration tests while the Compose service is healthy. The repository test applies the up migration and verifies the down migration:
@@ -171,7 +194,7 @@ Run the Worker publish/persist/ack end-to-end integration test while RabbitMQ an
 RABBITMQ_INTEGRATION_TEST=1 CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/worker -v
 ```
 
-Run the isolated ClickHouse migration/insert/select/down integration test while ClickHouse is healthy:
+Run the isolated ClickHouse repository integration tests, including statistics aggregates and filters, while ClickHouse is healthy:
 
 ```bash
 CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/clickhouse -v
