@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 003 adds the first domain feature and PostgreSQL persistence:
+Increment 004 exposes the App feature over HTTP:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -16,9 +16,11 @@ Increment 003 adds the first domain feature and PostgreSQL persistence:
 - clean pool shutdown after the HTTP server stops;
 - the `App` domain model and service validation;
 - PostgreSQL `App` repository operations (`Create`, `GetByID`, and `Exists`);
-- reversible SQL migrations for the `apps` table.
+- reversible SQL migrations for the `apps` table;
+- `POST /api/v1/apps` to create an application;
+- `GET /api/v1/apps/{id}` to retrieve an application.
 
-HTTP business endpoints, RabbitMQ, ClickHouse, and API containerization are intentionally outside this increment.
+RabbitMQ, ClickHouse, event ingestion, and API containerization are intentionally outside this increment.
 
 ## Requirements
 
@@ -72,6 +74,16 @@ Expected response:
 
 ```json
 {"status":"ok"}
+```
+
+Create and retrieve an application after applying the up migration:
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/apps \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Spotify","publisher":"Spotify AB","category":"music"}'
+
+curl -i http://localhost:8080/api/v1/apps/<app-id>
 ```
 
 Stop the process with `Ctrl+C`; the server will stop accepting new connections and wait for active requests to complete.

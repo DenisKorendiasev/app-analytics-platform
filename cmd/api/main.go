@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/DenisKorendiasev/app-analytics-platform/internal/app"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/config"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/httpserver"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/postgres"
@@ -47,7 +48,11 @@ func run() int {
 	}()
 	logger.Info("connected to PostgreSQL", "host", cfg.Postgres.Host, "port", cfg.Postgres.Port)
 
-	server := httpserver.New(fmt.Sprintf(":%d", cfg.HTTPPort), logger)
+	appRepository := postgres.NewAppRepository(database)
+	appService := app.NewService(appRepository)
+	appHandler := app.NewHandler(appService, logger)
+
+	server := httpserver.New(fmt.Sprintf(":%d", cfg.HTTPPort), logger, appHandler.RegisterRoutes)
 	serverError := make(chan error, 1)
 	go func() {
 		logger.Info("HTTP server started", "port", cfg.HTTPPort)
