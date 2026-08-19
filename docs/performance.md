@@ -1,6 +1,6 @@
 # Performance Measurements
 
-This document records reproducible measurements for Increment 016. The numbers below were produced by a real local run on August 19, 2026; they are not estimates.
+This document records reproducible performance measurements. The numbers below were produced by a real local run on August 19, 2026; they are not estimates.
 
 ## Scope
 
