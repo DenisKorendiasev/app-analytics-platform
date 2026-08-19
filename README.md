@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 016 adds reproducible performance measurements:
+Increment 017 adds automated pull request verification:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -65,9 +65,12 @@ Increment 016 adds reproducible performance measurements:
 - raw and median events/sec, processing-duration, and ClickHouse insert-duration measurements;
 - automatic temporary-database creation and cleanup that leaves the source events table unchanged;
 - `EXPLAIN indexes = 1` analysis of the per-application statistics query on 100,000 synthetic events;
-- measured methodology, environment, raw results, limitations, and reproduction steps in `docs/performance.md`.
+- measured methodology, environment, raw results, limitations, and reproduction steps in `docs/performance.md`;
+- GitHub Actions checks for formatting, vetting, compilation, unit tests, the race detector, and golangci-lint;
+- a separate CI job for the complete Testcontainers integration suite;
+- read-only workflow permissions, dependency caching, timeouts, and cancellation of obsolete runs.
 
-Additional ranking metrics, retry/DLQ policies, and continuous integration are intentionally outside this increment.
+Additional ranking metrics and RabbitMQ reliability mechanisms are intentionally outside this increment.
 
 ## Requirements
 
@@ -283,6 +286,19 @@ The command uses the standard `CLICKHOUSE_*` configuration, clones the configure
 
 See [docs/performance.md](docs/performance.md) for the exact methodology, measured environment, raw numbers, interpretation, limitations, and isolated Compose reproduction commands.
 
+## Continuous integration
+
+The `CI` workflow runs for every pull request and every push to `main`. It uses the Go version declared in `go.mod` and exposes four independent status checks:
+
+| Check | Commands |
+| --- | --- |
+| Format, vet, and build | `gofmt -l .`, `go vet ./...`, `go build ./...` |
+| golangci-lint | golangci-lint `v2.12.2` with `.golangci.yml` |
+| Unit and race tests | `go test ./...`, `go test -race ./...` |
+| Integration tests | `go test -tags=integration ./test/integration -v -count=1` |
+
+The Testcontainers suite has its own job so Docker-based checks do not serialize the faster feedback. Workflow permissions are read-only, Go dependencies and build outputs are cached, jobs have explicit timeouts, and a newer commit cancels an obsolete run for the same branch. Subsequent pull requests should be approved only after all four checks are green.
+
 ## Verify
 
 ```bash
@@ -292,6 +308,7 @@ go test ./...
 go test -race ./...
 go test -tags=integration ./test/integration -v -count=1
 go build ./...
+golangci-lint run
 go run ./cmd/generator --help
 go run ./cmd/performance --help
 docker build --target api -t app-analytics-api:local .

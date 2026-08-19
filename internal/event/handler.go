@@ -45,14 +45,7 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.service.Ingest(r.Context(), Input{
-		AppID:        request.AppID,
-		EventType:    request.EventType,
-		Country:      request.Country,
-		Platform:     request.Platform,
-		RevenueCents: request.RevenueCents,
-		Timestamp:    request.Timestamp,
-	})
+	_, err := h.service.Ingest(r.Context(), Input(request))
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return

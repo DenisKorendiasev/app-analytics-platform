@@ -87,7 +87,7 @@ type rankingRecord struct {
 func newRankingsResponse(result RankingResult) rankingsResponse {
 	records := make([]rankingRecord, len(result.Items))
 	for index, item := range result.Items {
-		records[index] = rankingRecord{AppID: item.AppID, Value: item.Value}
+		records[index] = rankingRecord(item)
 	}
 	return rankingsResponse{Metric: result.Metric, Rankings: records}
 }
