@@ -45,18 +45,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, measure m
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "performance: unexpected positional arguments: %v\n", flags.Args())
+		_, _ = fmt.Fprintf(stderr, "performance: unexpected positional arguments: %v\n", flags.Args())
 		return 2
 	}
 
 	batchSizes, err := parseBatchSizes(*batches)
 	if err != nil {
-		fmt.Fprintf(stderr, "performance: configure batches: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "performance: configure batches: %v\n", err)
 		return 1
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(stderr, "performance: load configuration: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "performance: load configuration: %v\n", err)
 		return 1
 	}
 	report, err := measure(ctx, clickhouseinfra.Config{
@@ -70,17 +70,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, measure m
 		Runs:       *runs,
 		BatchSizes: batchSizes,
 		Progress: func(progress performance.Progress) {
-			fmt.Fprintf(stderr, "performance: batch=%d run=%d/%d\n", progress.BatchSize, progress.Run, progress.TotalRuns)
+			_, _ = fmt.Fprintf(stderr, "performance: batch=%d run=%d/%d\n", progress.BatchSize, progress.Run, progress.TotalRuns)
 		},
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "performance: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "performance: %v\n", err)
 		return 1
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(report); err != nil {
-		fmt.Fprintf(stderr, "performance: write report: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "performance: write report: %v\n", err)
 		return 1
 	}
 	return 0

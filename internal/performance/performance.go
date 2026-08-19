@@ -313,7 +313,7 @@ func generateEvents(count int) ([]event.Event, uuid.UUID) {
 	return events, applicationIDs[0]
 }
 
-func analyzeStatisticsQuery(ctx context.Context, connection clickhousego.Conn, appID uuid.UUID) (QueryAnalysis, error) {
+func analyzeStatisticsQuery(ctx context.Context, connection clickhousego.Conn, appID uuid.UUID) (analysis QueryAnalysis, resultError error) {
 	const query = `
 		SELECT
 			countIf(event_type = 'install'),
@@ -327,7 +327,11 @@ func analyzeStatisticsQuery(ctx context.Context, connection clickhousego.Conn, a
 	if err != nil {
 		return QueryAnalysis{}, fmt.Errorf("explain application statistics query: %w", err)
 	}
-	defer explainRows.Close()
+	defer func() {
+		if err := explainRows.Close(); err != nil {
+			resultError = errors.Join(resultError, fmt.Errorf("close application statistics explanation: %w", err))
+		}
+	}()
 	plan := make([]string, 0, 16)
 	for explainRows.Next() {
 		var line string

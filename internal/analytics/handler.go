@@ -95,13 +95,7 @@ type statisticsResponse struct {
 }
 
 func newStatisticsResponse(statistics Statistics) statisticsResponse {
-	return statisticsResponse{
-		AppID:        statistics.AppID,
-		Installs:     statistics.Installs,
-		Sessions:     statistics.Sessions,
-		Purchases:    statistics.Purchases,
-		RevenueCents: statistics.RevenueCents,
-	}
+	return statisticsResponse(statistics)
 }
 
 type errorResponse struct {

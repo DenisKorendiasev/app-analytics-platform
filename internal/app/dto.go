@@ -25,11 +25,5 @@ type errorResponse struct {
 }
 
 func newAppResponse(application App) appResponse {
-	return appResponse{
-		ID:        application.ID,
-		Name:      application.Name,
-		Publisher: application.Publisher,
-		Category:  application.Category,
-		CreatedAt: application.CreatedAt,
-	}
+	return appResponse(application)
 }

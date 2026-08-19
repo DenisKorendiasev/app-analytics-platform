@@ -130,7 +130,6 @@ func (w *Worker) Run(ctx context.Context) error {
 			<-receiveResult
 			receiverDone = true
 			stopTimer(timer)
-			timerChannel = nil
 			return errors.Join(
 				stopError,
 				w.flush(context.WithoutCancel(ctx), batch),

@@ -47,7 +47,7 @@ func runIntegrationSuite(m *testing.M) (exitCode int) {
 	defer func() {
 		for index := len(containers) - 1; index >= 0; index-- {
 			if err := testcontainers.TerminateContainer(containers[index]); err != nil {
-				fmt.Fprintf(os.Stderr, "terminate integration container: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "terminate integration container: %v\n", err)
 				exitCode = 1
 			}
 		}
@@ -61,19 +61,19 @@ func runIntegrationSuite(m *testing.M) (exitCode int) {
 		tcpostgres.BasicWaitStrategies(),
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "start PostgreSQL testcontainer: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "start PostgreSQL testcontainer: %v\n", err)
 		return 1
 	}
 	containers = append(containers, postgresContainer)
 
 	postgresURL, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "get PostgreSQL testcontainer URL: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "get PostgreSQL testcontainer URL: %v\n", err)
 		return 1
 	}
 	suiteEnvironment.postgres, err = postgresConfigFromURL(postgresURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "parse PostgreSQL testcontainer URL: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "parse PostgreSQL testcontainer URL: %v\n", err)
 		return 1
 	}
 
@@ -83,14 +83,14 @@ func runIntegrationSuite(m *testing.M) (exitCode int) {
 		tcrabbitmq.WithAdminPassword(testPassword),
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "start RabbitMQ testcontainer: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "start RabbitMQ testcontainer: %v\n", err)
 		return 1
 	}
 	containers = append(containers, rabbitContainer)
 
 	suiteEnvironment.rabbitURL, err = rabbitContainer.AmqpURL(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "get RabbitMQ testcontainer URL: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "get RabbitMQ testcontainer URL: %v\n", err)
 		return 1
 	}
 
@@ -101,19 +101,19 @@ func runIntegrationSuite(m *testing.M) (exitCode int) {
 		tcclickhouse.WithPassword(testPassword),
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "start ClickHouse testcontainer: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "start ClickHouse testcontainer: %v\n", err)
 		return 1
 	}
 	containers = append(containers, clickHouseContainer)
 
 	clickHouseHost, err := clickHouseContainer.ConnectionHost(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "get ClickHouse testcontainer address: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "get ClickHouse testcontainer address: %v\n", err)
 		return 1
 	}
 	suiteEnvironment.clickhouse, err = clickHouseConfigFromHost(clickHouseHost)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "parse ClickHouse testcontainer address: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "parse ClickHouse testcontainer address: %v\n", err)
 		return 1
 	}
 

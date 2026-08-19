@@ -39,7 +39,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "generator: unexpected positional arguments: %v\n", flags.Args())
+		_, _ = fmt.Fprintf(stderr, "generator: unexpected positional arguments: %v\n", flags.Args())
 		return 2
 	}
 
@@ -49,16 +49,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		EventCount: *eventCount,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "generator: configure: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "generator: configure: %v\n", err)
 		return 1
 	}
 	summary, err := syntheticGenerator.Run(ctx)
 	if err != nil {
-		fmt.Fprintf(stderr, "generator: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "generator: %v\n", err)
 		return 1
 	}
 	if err := json.NewEncoder(stdout).Encode(summary); err != nil {
-		fmt.Fprintf(stderr, "generator: write summary: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "generator: write summary: %v\n", err)
 		return 1
 	}
 	return 0
