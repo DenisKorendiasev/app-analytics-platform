@@ -21,7 +21,7 @@ The application declares two durable direct exchanges and two durable classic qu
 
 The main queue sets `x-dead-letter-exchange` and `x-dead-letter-routing-key`. A delivery rejected with `requeue=false` is routed by RabbitMQ to the dead-letter queue and receives RabbitMQ death headers such as `x-first-death-reason`.
 
-RabbitMQ checks queue argument equivalence when a durable queue is redeclared. An environment upgrading from an older increment must first drain and delete the old `app.events` queue, then restart the API or Worker to recreate it. For larger deployments, RabbitMQ recommends applying dead-letter configuration through an operator-managed policy because policies can be changed without deleting the queue. This project keeps the topology application-owned so isolated local and Testcontainers environments are self-contained.
+RabbitMQ checks queue argument equivalence when a durable queue is redeclared. An environment upgrading from a version without dead-letter arguments must first drain and delete the old `app.events` queue, then restart the API or Worker to recreate it. For larger deployments, RabbitMQ recommends applying dead-letter configuration through an operator-managed policy because policies can be changed without deleting the queue. This project keeps the topology application-owned so isolated local and Testcontainers environments are self-contained.
 
 References: [RabbitMQ publisher confirms and consumer acknowledgements](https://www.rabbitmq.com/docs/confirms), [dead-letter exchanges](https://www.rabbitmq.com/docs/dlx), [queue declaration and optional arguments](https://www.rabbitmq.com/docs/queues).
 
@@ -42,7 +42,7 @@ Immediate broker requeue is not used for application failures because multiple c
 
 The deduplication map is deliberately batch-local. It does not survive a Worker restart and cannot prevent duplicates delivered in later batches or produced by an ambiguous ClickHouse insert result. The current `MergeTree` table also does not enforce uniqueness. Consumers of analytical results must therefore treat `event_id` as the reconciliation key, and operators should retain dead-letter messages until they have been inspected or replayed safely.
 
-A durable cross-batch strategy would require additional state or a ClickHouse table/query design change and failure coordination between that state, ClickHouse, and RabbitMQ. That complexity is not justified by the current increment and would still need explicit semantics before any exactly-once claim.
+A durable cross-batch strategy would require additional state or a ClickHouse table/query design change and failure coordination between that state, ClickHouse, and RabbitMQ. That complexity is outside the current MVP and would still need explicit semantics before any exactly-once claim.
 
 ## Verification
 

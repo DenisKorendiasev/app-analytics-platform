@@ -1,329 +1,296 @@
 # App Analytics Platform
 
-Backend platform for collecting and analyzing mobile application events. The project is being built incrementally with Go, PostgreSQL, RabbitMQ, and ClickHouse.
+[![CI](https://github.com/DenisKorendiasev/app-analytics-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/DenisKorendiasev/app-analytics-platform/actions/workflows/ci.yml)
 
-## Current increment
+Data-intensive backend platform for collecting and analyzing mobile application events. Built with Go, PostgreSQL, RabbitMQ, ClickHouse, and Docker Compose.
 
-Increment 018 adds reliable RabbitMQ event processing:
+## Project overview
 
-- a Go HTTP server;
-- `GET /health` health check;
-- environment-based configuration;
-- structured JSON logging;
-- graceful shutdown on `SIGINT` and `SIGTERM`;
-- a PostgreSQL connection pool verified before the HTTP server starts;
-- a PostgreSQL-only Docker Compose service;
-- clean pool shutdown after the HTTP server stops;
-- the `App` domain model and service validation;
-- PostgreSQL `App` repository operations (`Create`, `GetByID`, and `Exists`);
-- reversible SQL migrations for the `apps` table;
-- `POST /api/v1/apps` to create an application;
-- `GET /api/v1/apps/{id}` to retrieve an application;
-- a durable RabbitMQ direct exchange, queue, and binding;
-- a persistent-message RabbitMQ publisher connected to the API lifecycle;
-- RabbitMQ Management UI for local development;
-- the `Event` domain model and validation for supported event types and platforms;
-- application existence checks before event acceptance;
-- `POST /api/v1/events` to publish accepted events to RabbitMQ;
-- a second Go application at `cmd/worker`;
-- a RabbitMQ consumer with manual acknowledgement and a 500-message prefetch;
-- typed event decoding and structured event logging;
-- graceful Worker shutdown that finishes the current delivery before closing RabbitMQ;
-- a ClickHouse 26.3 LTS Docker Compose service with health checks;
-- environment-based ClickHouse connection settings;
-- a native ClickHouse connection pool with verified startup and clean lifecycle;
-- reversible `events` table migrations;
-- a ClickHouse Event repository with native batch insertion;
-- Worker batches of up to 500 events or one second of waiting;
-- RabbitMQ acknowledgement only after a successful ClickHouse batch insert;
-- unacknowledged delivery on ClickHouse persistence failure;
-- graceful Worker shutdown that stops consumption, flushes the remaining batch, and then acknowledges it;
-- a ClickHouse connection integrated into the API lifecycle;
-- `GET /api/v1/apps/{id}/stats` with event counts and purchase revenue;
-- optional `from`, `to`, `country`, and `platform` statistics filters;
-- `GET /api/v1/rankings` ordered by install count;
-- optional ranking filters and a bounded result limit;
-- one multi-stage Dockerfile with dedicated API and Worker targets;
-- non-root runtime containers with only the compiled application and runtime certificates;
-- a complete Docker Compose stack for PostgreSQL, RabbitMQ, ClickHouse, API, and Worker;
-- dependency health checks and ordered application startup;
-- automatic schema initialization for fresh PostgreSQL and ClickHouse volumes;
-- configurable host ports for isolated local stacks;
-- one tagged integration suite that starts PostgreSQL, RabbitMQ, and ClickHouse with Testcontainers;
-- isolated PostgreSQL schemas, ClickHouse databases, and RabbitMQ topologies for every test;
-- PostgreSQL repository create/read/existence, not-found, constraint, and migration coverage;
-- RabbitMQ publish, consume, persistence, and JSON message-format coverage;
-- ClickHouse single insert, batch insert, statistics, rankings, and migration coverage;
-- an end-to-end HTTP scenario from application creation and event ingestion through Worker processing to ClickHouse statistics;
-- a third Go command at `cmd/generator` for producing configurable application and event volumes;
-- synthetic application names, publishers, and categories;
-- balanced install, session, and purchase events across generated applications;
-- randomized countries, Android/iOS platforms, and timestamps from the previous 30 days;
-- positive purchase revenue with zero revenue for non-purchase events;
-- all generated data sent through the public API and the real ingestion pipeline;
-- an isolated ClickHouse performance command comparing native inserts with batch sizes 1, 100, 500, and 1000;
-- raw and median events/sec, processing-duration, and ClickHouse insert-duration measurements;
-- automatic temporary-database creation and cleanup that leaves the source events table unchanged;
-- `EXPLAIN indexes = 1` analysis of the per-application statistics query on 100,000 synthetic events;
-- measured methodology, environment, raw results, limitations, and reproduction steps in `docs/performance.md`;
-- GitHub Actions checks for formatting, vetting, compilation, unit tests, the race detector, and golangci-lint;
-- a separate CI job for the complete Testcontainers integration suite;
-- read-only workflow permissions, dependency caching, timeouts, and cancellation of obsolete runs;
-- a durable dead-letter exchange and queue for failed event deliveries;
-- publisher confirms before the API reports an event as accepted;
-- poison-message rejection without stopping consumption;
-- three bounded ClickHouse insert attempts with 100 ms and 200 ms backoff;
-- dead-lettering after persistence retries are exhausted;
-- duplicate `event_id` filtering within each Worker batch;
-- integration coverage for dead-letter routing and unacknowledged redelivery;
-- documented at-least-once guarantees and duplicate-delivery limitations.
+The platform accepts application metadata and high-volume event traffic through an HTTP API, processes events asynchronously, and serves analytical statistics and rankings from ClickHouse.
 
-Operational metrics and alerting are intentionally outside this increment.
+The repository is intentionally a focused backend MVP rather than a collection of infrastructure demos. It includes:
 
-## Requirements
+- application creation and lookup;
+- event ingestion with application validation;
+- asynchronous RabbitMQ delivery with publisher confirms and manual acknowledgements;
+- batched ClickHouse writes with bounded retry and dead-letter handling;
+- per-application statistics and install rankings;
+- synthetic data generation and a reproducible ClickHouse benchmark;
+- unit, race, integration, and end-to-end tests in GitHub Actions.
 
-- Go 1.25 or newer for running outside containers
-- Docker with Docker Compose for the complete local platform
+## Architecture
 
-## Configuration
+```mermaid
+flowchart LR
+    Client[Client / Generator] --> API[Go API]
+    API -->|application metadata| PostgreSQL[(PostgreSQL)]
+    API -->|publish event| Exchange[RabbitMQ exchange]
+    Exchange --> Queue[RabbitMQ event queue]
+    Queue -->|manual delivery| Worker[Go Worker]
+    Worker -->|native batch insert| ClickHouse[(ClickHouse)]
+    API -->|statistics and rankings| ClickHouse
+    Queue -->|reject without requeue| DLX[Dead-letter exchange]
+    DLX --> DLQ[Dead-letter queue]
+```
 
-| Variable | Default | Description |
+The API and Worker are separate binaries built from one repository. PostgreSQL owns transactional application metadata, RabbitMQ separates request handling from analytical writes, and ClickHouse stores the append-oriented event stream and executes aggregate queries.
+
+## Tech stack
+
+| Area | Technology | Role |
 | --- | --- | --- |
-| `HTTP_PORT` | `8080` | HTTP server port (1–65535) |
-| `API_HOST_PORT` | `8080` | Host port published for the containerized API |
-| `SHUTDOWN_TIMEOUT` | `10s` | Maximum graceful shutdown duration in Go duration format |
-| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, or `ERROR` |
-| `POSTGRES_HOST` | `localhost` | PostgreSQL host |
-| `POSTGRES_PORT` | `5432` | PostgreSQL port (1–65535) |
-| `POSTGRES_DB` | `app_analytics` | PostgreSQL database |
-| `POSTGRES_USER` | `app_analytics` | PostgreSQL user |
-| `POSTGRES_PASSWORD` | `app_analytics` | Local development password; override outside local development |
-| `POSTGRES_SSLMODE` | `disable` | PostgreSQL SSL mode |
-| `POSTGRES_HOST_PORT` | `5432` | Host port published for PostgreSQL |
-| `RABBITMQ_URL` | `amqp://app_analytics:app_analytics@localhost:5672/` | RabbitMQ connection URL |
-| `RABBITMQ_EXCHANGE` | `app.events` | Durable direct exchange |
-| `RABBITMQ_QUEUE` | `app.events` | Durable event queue |
-| `RABBITMQ_ROUTING_KEY` | `app.events` | Queue binding and publish routing key |
-| `RABBITMQ_HOST_PORT` | `5672` | Host port published for AMQP |
-| `RABBITMQ_MANAGEMENT_HOST_PORT` | `15672` | Host port published for RabbitMQ Management UI |
-| `CLICKHOUSE_HOST` | `localhost` | ClickHouse host |
-| `CLICKHOUSE_PORT` | `9000` | ClickHouse native protocol port (1–65535) |
-| `CLICKHOUSE_DATABASE` | `app_analytics` | ClickHouse database |
-| `CLICKHOUSE_USER` | `app_analytics` | ClickHouse user |
-| `CLICKHOUSE_PASSWORD` | `app_analytics` | Local development password; override outside local development |
-| `CLICKHOUSE_HTTP_HOST_PORT` | `8123` | Host port published for ClickHouse HTTP protocol |
-| `CLICKHOUSE_NATIVE_HOST_PORT` | `9000` | Host port published for ClickHouse native protocol |
+| Language | Go 1.25+ | API, Worker, generator, benchmark |
+| Transactional storage | PostgreSQL 17 | Application metadata and existence checks |
+| Messaging | RabbitMQ 4 | Durable event queue, publisher confirms, acknowledgements, DLQ |
+| Analytical storage | ClickHouse 26.3 | Batched event storage, statistics, rankings |
+| Containers | Docker, Docker Compose | Reproducible local stack and health-aware startup |
+| Testing | Go testing, race detector, Testcontainers | Unit, integration, and end-to-end coverage |
+| CI | GitHub Actions, golangci-lint | Four required pull-request checks |
 
-Copy `.env.example` to `.env` to customize Docker Compose. Export the same values in your shell when running the API with non-default settings.
+The implementation uses the standard `net/http` router and `log/slog`, `pgx` for PostgreSQL, the native ClickHouse Go client, and the maintained AMQP 0.9.1 Go client.
 
-## Start the platform with Docker Compose
+## How it works
+
+1. A client creates an application. The API validates and stores it in PostgreSQL.
+2. Before accepting an event, the API validates its fields and verifies that its `app_id` exists.
+3. The API generates an `event_id`, publishes a persistent JSON message, and waits for a RabbitMQ publisher confirmation before returning `202 Accepted`.
+4. The Worker consumes with manual acknowledgements and a prefetch of 500.
+5. Events are written to ClickHouse in native batches. Deliveries are acknowledged only after ClickHouse reports success.
+6. Statistics and rankings are queried directly from ClickHouse through the API.
+
+The API and Worker both use structured JSON logs and graceful shutdown. Startup fails fast when a required PostgreSQL, RabbitMQ, or ClickHouse connection cannot be established.
+
+## Event flow
+
+```text
+POST /api/v1/events
+        │
+        ├─ validate payload and app_id in PostgreSQL
+        ├─ assign event_id
+        └─ publish persistent message + wait for broker confirm
+                                │
+                                ▼
+                    RabbitMQ app.events queue
+                                │
+                      batches of 500 or 1 s
+                                │
+                                ▼
+                      ClickHouse events table
+                                │
+                     ack RabbitMQ deliveries
+```
+
+Malformed or structurally invalid messages are rejected without requeue and sent to `app.events.dead-letter`. A failed ClickHouse batch is attempted at most three times with 100 ms and 200 ms delays; an exhausted batch is dead-lettered and the Worker returns an error.
+
+The consumer side is **at least once**, not exactly once. RabbitMQ can redeliver an unacknowledged event, and a ClickHouse insert can succeed while its response or subsequent acknowledgement is lost. `event_id` removes duplicates only when they occur in the same Worker batch; it remains the reconciliation key for duplicates across batches or process restarts. See [Event processing reliability](docs/reliability.md) for the complete model.
+
+## Why PostgreSQL
+
+Applications are transactional reference data: identifiers must be unique, required fields must be constrained, and the API needs an inexpensive existence check before accepting an event. PostgreSQL provides those guarantees and keeps this workload independent from analytical event scans.
+
+## Why ClickHouse
+
+Events are append-oriented and are primarily read through counts, conditional sums, time ranges, and ranking aggregations. The `MergeTree` table partitions by event month and sorts by `(app_id, timestamp, event_id)`, which matches per-application time-range analytics while keeping repeated dimensions in `LowCardinality(String)` columns.
+
+## Why RabbitMQ
+
+RabbitMQ decouples HTTP latency from ClickHouse batch writes and supplies durable queues, backpressure through prefetch, explicit acknowledgements, and dead-letter routing. Publisher confirms prevent the API from reporting a successful publish before RabbitMQ accepts responsibility for it.
+
+The application declares its local-development topology so new environments are self-contained. Production environments would usually manage changeable dead-letter settings through RabbitMQ policies.
+
+## Batch processing
+
+The Worker flushes when either condition is met:
+
+- 500 deliveries have accumulated; or
+- one second has elapsed since the first delivery entered an empty batch.
+
+Repeated `event_id` values within the batch produce one ClickHouse row while all matching RabbitMQ deliveries are acknowledged. On shutdown, the Worker stops accepting deliveries, drains its in-flight buffer, flushes the final batch, and then closes its resources.
+
+The measured benchmark showed that native batching dominates single-row insertion on the recorded local setup. Batch size 500 delivered roughly 7,842 events/s versus 15.9 events/s for individual inserts. These are isolated measurements, not an end-to-end SLA; methodology and raw results are in [Performance measurements](docs/performance.md).
+
+## How to run
+
+### Requirements
+
+- Git
+- Docker with Docker Compose
+- Go 1.25+ only when running commands outside containers
+
+### Quick start
 
 ```bash
-cp .env.example .env
-docker compose up --build -d
+git clone https://github.com/DenisKorendiasev/app-analytics-platform.git
+cd app-analytics-platform
+docker compose up -d
 docker compose ps
-```
-
-Compose builds separate API and Worker targets from the same multi-stage Dockerfile. A small ClickHouse target adds the database-aware init script to the official image. The API becomes healthy only after PostgreSQL, RabbitMQ, and ClickHouse are healthy; the Worker also waits for RabbitMQ and ClickHouse. The API is available at [http://localhost:8080](http://localhost:8080) by default.
-
-On first startup, the database images apply the checked-in `apps` and `events` migrations while initializing their data volumes. Existing volumes are preserved and are not initialized again. Use the manual commands below when applying or rolling back migrations in an existing development volume.
-
-RabbitMQ Management UI is available at [http://localhost:15672](http://localhost:15672) with the local credentials from `.env.example`.
-
-Increment 018 adds dead-letter arguments to the durable event queue. RabbitMQ does not allow an existing queue to be redeclared with different arguments. Before upgrading a persistent environment created by an earlier increment, drain `app.events`, delete that queue, and restart the API or Worker so it is recreated with the dead-letter configuration. Fresh Compose volumes require no manual action. See [Event processing reliability](docs/reliability.md) for the topology and delivery guarantees.
-
-Apply or roll back the `apps` table manually with the local development credentials:
-
-```bash
-docker compose exec -T postgres psql -U app_analytics -d app_analytics < migrations/postgres/000001_create_apps.up.sql
-docker compose exec -T postgres psql -U app_analytics -d app_analytics < migrations/postgres/000001_create_apps.down.sql
-```
-
-Apply or roll back the ClickHouse `events` table:
-
-```bash
-docker compose exec -T clickhouse clickhouse-client --user app_analytics --password app_analytics --database app_analytics < migrations/clickhouse/000001_create_events.up.sql
-docker compose exec -T clickhouse clickhouse-client --user app_analytics --password app_analytics --database app_analytics < migrations/clickhouse/000001_create_events.down.sql
-```
-
-The `events` table uses `MergeTree`, partitions by event month, and sorts by `(app_id, timestamp, event_id)`. This append-oriented layout supports future per-application time-range analytics while retaining deterministic ordering within equal timestamps. Event type, country, and platform use `LowCardinality(String)` because they are repeated analytical dimensions.
-
-## Run locally
-
-To run the Go applications directly, start only the infrastructure and apply migrations as described above:
-
-```bash
-docker compose up -d postgres rabbitmq clickhouse
-```
-
-Start the API:
-
-```bash
-go run ./cmd/api
-```
-
-Start the Worker in another terminal:
-
-```bash
-go run ./cmd/worker
-```
-
-The API publishes each persistent event with AMQP `message_id` set to `event_id` and waits for a RabbitMQ publisher confirmation before returning `202 Accepted`. The Worker subscribes to `app.events` with a prefetch of 500 and starts a batch timer when the first delivery enters an empty batch. It flushes when the batch reaches 500 events or after one second, whichever happens first. ClickHouse receives the unique `event_id` values from the batch through one native insert, and every RabbitMQ delivery is acknowledged only after that insert succeeds. A transient insert failure is retried twice with exponential backoff. After the third failed attempt, all deliveries in the batch are rejected without requeue and routed to `app.events.dead-letter`; the Worker then returns the persistence error. Malformed or structurally invalid events are routed to the same queue and consumption continues. During graceful shutdown the Worker stops accepting deliveries, flushes the remaining batch, acknowledges successful messages, and then releases its resources.
-
-Check the service:
-
-```bash
 curl http://localhost:8080/health
 ```
 
-Expected response:
+Compose builds missing application images automatically. Add `--build` after local source changes when an existing image must be rebuilt.
+
+Expected health response:
 
 ```json
 {"status":"ok"}
 ```
 
-Create and retrieve an application after applying the up migration:
+Fresh volumes initialize the PostgreSQL and ClickHouse schemas automatically. The default endpoints are:
 
-```bash
-curl -i -X POST http://localhost:8080/api/v1/apps \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Spotify","publisher":"Spotify AB","category":"music"}'
+| Service | Address |
+| --- | --- |
+| API | `http://localhost:8080` |
+| RabbitMQ Management | `http://localhost:15672` |
+| PostgreSQL | `localhost:5432` |
+| ClickHouse HTTP | `http://localhost:8123` |
+| ClickHouse native | `localhost:9000` |
 
-curl -i http://localhost:8080/api/v1/apps/<app-id>
-```
+Local credentials are intentionally development-only and are documented in [.env.example](.env.example). Copy it to `.env` to override ports or credentials. The applications also accept the same values directly from environment variables.
 
-Publish an event for an existing application. A valid request returns `202 Accepted` and the generated event is written to the `app.events` RabbitMQ queue:
-
-```bash
-curl -i -X POST http://localhost:8080/api/v1/events \
-  -H 'Content-Type: application/json' \
-  -d '{"app_id":"<app-id>","event_type":"purchase","country":"RS","platform":"android","revenue_cents":999,"timestamp":"2026-08-18T12:35:02Z"}'
-```
-
-Supported event types are `install`, `session`, and `purchase`. Supported platforms are `android` and `ios`. Purchase revenue must be a non-negative integer number of cents.
-
-Get application statistics from ClickHouse:
-
-```bash
-curl 'http://localhost:8080/api/v1/apps/<app-id>/stats?from=2026-08-01&to=2026-08-18&country=RS&platform=android'
-```
-
-Example response:
-
-```json
-{
-  "app_id": "b8edbe8d-4fa6-42fd-a351-9a98d17d8b83",
-  "installs": 12543,
-  "sessions": 98421,
-  "purchases": 741,
-  "revenue_cents": 839231
-}
-```
-
-`from` and `to` use `YYYY-MM-DD` in UTC. Both dates are inclusive; internally the upper bound is the beginning of the following day. `platform`, when present, must be `android` or `ios`. An application with no matching events returns zero metrics.
-
-Get application rankings from ClickHouse:
-
-```bash
-curl 'http://localhost:8080/api/v1/rankings?metric=installs&country=RS&from=2026-08-01&to=2026-08-18&limit=10'
-```
-
-Example response:
-
-```json
-{
-  "metric": "installs",
-  "rankings": [
-    {
-      "app_id": "b8edbe8d-4fa6-42fd-a351-9a98d17d8b83",
-      "value": 12543
-    }
-  ]
-}
-```
-
-The only supported metric in this increment is `installs`; omitting `metric` selects it by default. Rankings are ordered by value descending and then by application ID ascending for deterministic ties. `limit` defaults to `10` and accepts values from `1` to `100`. Date filtering uses the same inclusive UTC semantics as the Statistics API. Applications without matching installs are omitted.
-
-Stop the process with `Ctrl+C`; the server will stop accepting new connections and wait for active requests to complete.
-
-Stop the containerized platform without deleting persisted data:
+Stop the stack while retaining its named volumes:
 
 ```bash
 docker compose down
 ```
 
-## Integration tests
+To run the Go binaries directly, start `postgres`, `rabbitmq`, and `clickhouse` with Compose, then run `go run ./cmd/api` and `go run ./cmd/worker` in separate terminals.
 
-The integration suite requires a running Docker daemon, but it does not require the Compose stack or any integration-test environment variables. Testcontainers starts one PostgreSQL, RabbitMQ, and ClickHouse container for the suite and removes them afterward. Individual tests create isolated schemas, databases, and messaging topologies.
+### Upgrade note for older RabbitMQ volumes
 
-```bash
-go test -tags=integration ./test/integration -v -count=1
-```
+RabbitMQ does not allow a durable queue to be redeclared with different arguments. Environments created before dead-letter support was added must drain and delete the old `app.events` queue, then restart the API or Worker. Fresh clones need no manual action.
 
-The `integration` build tag keeps the ordinary unit-test loop fast. The end-to-end test exercises the HTTP application and event handlers, PostgreSQL application repository, RabbitMQ publisher and consumer, Worker batching, ClickHouse event repository, and Statistics API in one scenario.
+## API examples
 
-## Generate synthetic data
-
-Start the complete Compose stack, then run the generator against its public API:
+Create an application:
 
 ```bash
-go run ./cmd/generator \
-  --api-url=http://localhost:8080 \
-  --events=100000 \
-  --apps=100
+curl -i --json '{
+  "name": "Spotify",
+  "publisher": "Spotify AB",
+  "category": "music"
+}' http://localhost:8080/api/v1/apps
 ```
 
-`--api-url` defaults to `http://localhost:8080`, `--apps` defaults to `10`, and `--events` defaults to `1000`. Both counts must be greater than zero. Applications are created before events, so every generated event references an application accepted by the API. The command stops on the first rejected request, supports interruption with `Ctrl+C`, and prints a JSON summary after success:
+Copy the returned `id`, then retrieve the application:
+
+```bash
+curl http://localhost:8080/api/v1/apps/<app-id>
+```
+
+Publish an event. Supported event types are `install`, `session`, and `purchase`; platforms are `android` and `ios`.
+
+```bash
+curl -i --json '{
+  "app_id": "<app-id>",
+  "event_type": "purchase",
+  "country": "RS",
+  "platform": "android",
+  "revenue_cents": 999,
+  "timestamp": "2026-08-19T12:35:02Z"
+}' http://localhost:8080/api/v1/events
+```
+
+The Worker flushes a partial batch after one second. Query statistics with optional inclusive UTC dates, country, and platform:
+
+```bash
+curl 'http://localhost:8080/api/v1/apps/<app-id>/stats?from=2026-08-01&to=2026-08-19&country=RS&platform=android'
+```
 
 ```json
-{"apps_created":100,"events_accepted":100000}
+{
+  "app_id": "b8edbe8d-4fa6-42fd-a351-9a98d17d8b83",
+  "installs": 0,
+  "sessions": 0,
+  "purchases": 1,
+  "revenue_cents": 999
+}
 ```
 
-The generator deliberately reports accepted counts. Use the isolated performance command below for ClickHouse insertion measurements rather than treating HTTP generation time as a storage benchmark.
-
-## Measure ClickHouse performance
-
-Start ClickHouse, then run the reproducible insertion and analytics measurement:
+Query install rankings. `limit` defaults to 10 and is bounded to 1–100.
 
 ```bash
-go run ./cmd/performance \
-  --events=1000 \
-  --runs=3 \
-  --batches=1,100,500,1000
+curl 'http://localhost:8080/api/v1/rankings?metric=installs&country=RS&from=2026-08-01&to=2026-08-19&limit=10'
 ```
 
-The command uses the standard `CLICKHOUSE_*` configuration, clones the configured `events` schema into a temporary database, and removes that database when it finishes. The source database is not modified. Its JSON report contains every run and the median metrics for each batch size, followed by a real statistics-query result and its ClickHouse index plan.
+Rankings are ordered by install count descending and application ID ascending for deterministic ties. `installs` is currently the only supported ranking metric.
 
-See [docs/performance.md](docs/performance.md) for the exact methodology, measured environment, raw numbers, interpretation, limitations, and isolated Compose reproduction commands.
+## Testing
 
-## Continuous integration
-
-The `CI` workflow runs for every pull request and every push to `main`. It uses the Go version declared in `go.mod` and exposes four independent status checks:
-
-| Check | Commands |
-| --- | --- |
-| Format, vet, and build | `gofmt -l .`, `go vet ./...`, `go build ./...` |
-| golangci-lint | golangci-lint `v2.12.2` with `.golangci.yml` |
-| Unit and race tests | `go test ./...`, `go test -race ./...` |
-| Integration tests | `go test -tags=integration ./test/integration -v -count=1` |
-
-The Testcontainers suite has its own job so Docker-based checks do not serialize the faster feedback. Workflow permissions are read-only, Go dependencies and build outputs are cached, jobs have explicit timeouts, and a newer commit cancels an obsolete run for the same branch. Subsequent pull requests should be approved only after all four checks are green.
-
-## Verify
+Run the fast local checks:
 
 ```bash
 go fmt ./...
 go vet ./...
 go test ./...
 go test -race ./...
-go test -tags=integration ./test/integration -v -count=1
 go build ./...
-golangci-lint run
-go run ./cmd/generator --help
-go run ./cmd/performance --help
-docker build --target api -t app-analytics-api:local .
-docker build --target worker -t app-analytics-worker:local .
-docker compose config
-docker compose up -d
-docker compose ps
 ```
+
+Run the complete Testcontainers suite with a local Docker daemon:
+
+```bash
+go test -tags=integration ./test/integration -v -count=1
+```
+
+The integration suite starts PostgreSQL, RabbitMQ, and ClickHouse, then isolates every test with a PostgreSQL schema, ClickHouse database, and RabbitMQ topology. It covers repositories, migrations, message format and persistence, DLQ routing, redelivery, analytical queries, performance tooling, and an end-to-end HTTP → RabbitMQ → Worker → ClickHouse scenario.
+
+GitHub Actions runs four independent checks on every pull request and push to `main`:
+
+| Check | Verification |
+| --- | --- |
+| Format, vet, and build | `gofmt`, `go vet`, `go build` |
+| golangci-lint | pinned `v2.12.2` configuration |
+| Unit and race tests | `go test`, `go test -race` |
+| Integration tests | complete tagged Testcontainers suite |
+
+## Performance
+
+Generate traffic through the public API:
+
+```bash
+go run ./cmd/generator --api-url=http://localhost:8080 --apps=100 --events=100000
+```
+
+Measure isolated ClickHouse insertion using temporary databases that are removed after the run:
+
+```bash
+go run ./cmd/performance --events=1000 --runs=3 --batches=1,100,500,1000
+```
+
+Recorded medians on the documented Apple M4 / Docker Desktop environment:
+
+| Batch size | Insert operations | Events/s |
+| ---: | ---: | ---: |
+| 1 | 1000 | 15.90 |
+| 100 | 10 | 1,663.14 |
+| 500 | 2 | 7,841.99 |
+| 1000 | 1 | 15,147.05 |
+
+The harness also loads 100,000 deterministic events and records the real statistics query plan. See [docs/performance.md](docs/performance.md) before comparing or quoting the results.
+
+## Architecture decisions
+
+| Decision | Rationale | Trade-off |
+| --- | --- | --- |
+| Separate API and Worker binaries | Keeps request handling independent from asynchronous storage | Two processes must be operated |
+| PostgreSQL for apps, ClickHouse for events | Matches transactional and analytical access patterns | Cross-store operations are not atomic |
+| RabbitMQ between API and Worker | Enables batching, backpressure, and failure isolation | Delivery is at least once and needs reconciliation |
+| Manual acknowledgements after insert | Avoids acknowledging events before storage | Lost acknowledgements can cause duplicates |
+| Bounded in-process retry plus DLQ | Avoids hot requeue loops and preserves failed payloads | DLQ inspection/replay is operational work |
+| Batch-local `event_id` deduplication | Removes common duplicate deliveries without extra storage | Does not deduplicate across batches or restarts |
+| Application-declared RabbitMQ topology | Makes fresh and test environments self-contained | Existing queue argument changes require migration |
+| One repository with internal packages | Keeps the MVP easy to build, test, and review | Independent deployment boundaries remain limited |
+
+## Future improvements
+
+The current repository is a complete portfolio MVP, with several production-oriented extensions intentionally left out:
+
+- Prometheus metrics, dashboards, and alerting;
+- durable cross-batch idempotency with explicitly defined replay semantics;
+- operator-managed RabbitMQ policies and highly available queue configuration;
+- authentication, authorization, TLS termination, and secrets management;
+- additional ranking metrics and richer analytical dimensions;
+- retention policies, capacity testing, and horizontal deployment guidance;
+- distributed tracing and correlation fields across API, broker, and Worker.
+
+These are future design choices rather than implied capabilities of the current system.
