@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 004 exposes the App feature over HTTP:
+Increment 005 adds RabbitMQ infrastructure:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -18,9 +18,12 @@ Increment 004 exposes the App feature over HTTP:
 - PostgreSQL `App` repository operations (`Create`, `GetByID`, and `Exists`);
 - reversible SQL migrations for the `apps` table;
 - `POST /api/v1/apps` to create an application;
-- `GET /api/v1/apps/{id}` to retrieve an application.
+- `GET /api/v1/apps/{id}` to retrieve an application;
+- a durable RabbitMQ direct exchange, queue, and binding;
+- a persistent-message RabbitMQ publisher connected to the API lifecycle;
+- RabbitMQ Management UI for local development.
 
-RabbitMQ, ClickHouse, event ingestion, and API containerization are intentionally outside this increment.
+Event ingestion, publisher domain contracts, Worker, ClickHouse, and API containerization are intentionally outside this increment.
 
 ## Requirements
 
@@ -40,16 +43,22 @@ RabbitMQ, ClickHouse, event ingestion, and API containerization are intentionall
 | `POSTGRES_USER` | `app_analytics` | PostgreSQL user |
 | `POSTGRES_PASSWORD` | `app_analytics` | Local development password; override outside local development |
 | `POSTGRES_SSLMODE` | `disable` | PostgreSQL SSL mode |
+| `RABBITMQ_URL` | `amqp://app_analytics:app_analytics@localhost:5672/` | RabbitMQ connection URL |
+| `RABBITMQ_EXCHANGE` | `app.events` | Durable direct exchange |
+| `RABBITMQ_QUEUE` | `app.events` | Durable event queue |
+| `RABBITMQ_ROUTING_KEY` | `app.events` | Queue binding and publish routing key |
 
 Copy `.env.example` to `.env` to customize Docker Compose. Export the same values in your shell when running the API with non-default settings.
 
-## Start PostgreSQL
+## Start infrastructure
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres
+docker compose up -d postgres rabbitmq
 docker compose ps
 ```
+
+RabbitMQ Management UI is available at [http://localhost:15672](http://localhost:15672) with the local credentials from `.env.example`.
 
 Apply or roll back the `apps` table manually with the local development credentials:
 
@@ -92,6 +101,12 @@ Run the PostgreSQL integration tests while the Compose service is healthy. The r
 
 ```bash
 POSTGRES_INTEGRATION_TEST=1 go test ./internal/postgres -v
+```
+
+Run the RabbitMQ publish/consume integration test while RabbitMQ is healthy:
+
+```bash
+RABBITMQ_INTEGRATION_TEST=1 go test ./internal/rabbitmq -v
 ```
 
 ## Verify

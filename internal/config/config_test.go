@@ -41,6 +41,18 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Postgres.SSLMode != "disable" {
 		t.Errorf("Postgres.SSLMode = %q, want disable", cfg.Postgres.SSLMode)
 	}
+	if cfg.RabbitMQ.URL != "amqp://app_analytics:app_analytics@localhost:5672/" {
+		t.Errorf("RabbitMQ.URL = %q, want local development URL", cfg.RabbitMQ.URL)
+	}
+	if cfg.RabbitMQ.Exchange != "app.events" {
+		t.Errorf("RabbitMQ.Exchange = %q, want app.events", cfg.RabbitMQ.Exchange)
+	}
+	if cfg.RabbitMQ.Queue != "app.events" {
+		t.Errorf("RabbitMQ.Queue = %q, want app.events", cfg.RabbitMQ.Queue)
+	}
+	if cfg.RabbitMQ.RoutingKey != "app.events" {
+		t.Errorf("RabbitMQ.RoutingKey = %q, want app.events", cfg.RabbitMQ.RoutingKey)
+	}
 }
 
 func TestLoadFromEnvironment(t *testing.T) {
@@ -54,6 +66,10 @@ func TestLoadFromEnvironment(t *testing.T) {
 	t.Setenv("POSTGRES_USER", "test_user")
 	t.Setenv("POSTGRES_PASSWORD", "test_password")
 	t.Setenv("POSTGRES_SSLMODE", "REQUIRE")
+	t.Setenv("RABBITMQ_URL", "amqps://user:password@rabbitmq.internal:5671/analytics")
+	t.Setenv("RABBITMQ_EXCHANGE", "events.exchange")
+	t.Setenv("RABBITMQ_QUEUE", "events.queue")
+	t.Setenv("RABBITMQ_ROUTING_KEY", "events.created")
 
 	cfg, err := Load()
 	if err != nil {
@@ -87,6 +103,18 @@ func TestLoadFromEnvironment(t *testing.T) {
 	if cfg.Postgres.SSLMode != "require" {
 		t.Errorf("Postgres.SSLMode = %q, want require", cfg.Postgres.SSLMode)
 	}
+	if cfg.RabbitMQ.URL != "amqps://user:password@rabbitmq.internal:5671/analytics" {
+		t.Errorf("RabbitMQ.URL = %q, want environment value", cfg.RabbitMQ.URL)
+	}
+	if cfg.RabbitMQ.Exchange != "events.exchange" {
+		t.Errorf("RabbitMQ.Exchange = %q, want events.exchange", cfg.RabbitMQ.Exchange)
+	}
+	if cfg.RabbitMQ.Queue != "events.queue" {
+		t.Errorf("RabbitMQ.Queue = %q, want events.queue", cfg.RabbitMQ.Queue)
+	}
+	if cfg.RabbitMQ.RoutingKey != "events.created" {
+		t.Errorf("RabbitMQ.RoutingKey = %q, want events.created", cfg.RabbitMQ.RoutingKey)
+	}
 }
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
@@ -103,6 +131,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "non-numeric postgres port", key: "POSTGRES_PORT", value: "postgres"},
 		{name: "postgres port out of range", key: "POSTGRES_PORT", value: "65536"},
 		{name: "invalid postgres ssl mode", key: "POSTGRES_SSLMODE", value: "sometimes"},
+		{name: "invalid rabbitmq URL", key: "RABBITMQ_URL", value: "not-a-url"},
+		{name: "invalid rabbitmq scheme", key: "RABBITMQ_URL", value: "https://rabbitmq.internal"},
+		{name: "missing rabbitmq host", key: "RABBITMQ_URL", value: "amqp://:5672/"},
 	}
 
 	for _, tt := range tests {
@@ -130,6 +161,10 @@ func clearEnvironment(t *testing.T) {
 		"POSTGRES_USER",
 		"POSTGRES_PASSWORD",
 		"POSTGRES_SSLMODE",
+		"RABBITMQ_URL",
+		"RABBITMQ_EXCHANGE",
+		"RABBITMQ_QUEUE",
+		"RABBITMQ_ROUTING_KEY",
 	} {
 		t.Setenv(key, "")
 	}
