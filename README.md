@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 017 adds automated pull request verification:
+Increment 018 adds reliable RabbitMQ event processing:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -68,9 +68,17 @@ Increment 017 adds automated pull request verification:
 - measured methodology, environment, raw results, limitations, and reproduction steps in `docs/performance.md`;
 - GitHub Actions checks for formatting, vetting, compilation, unit tests, the race detector, and golangci-lint;
 - a separate CI job for the complete Testcontainers integration suite;
-- read-only workflow permissions, dependency caching, timeouts, and cancellation of obsolete runs.
+- read-only workflow permissions, dependency caching, timeouts, and cancellation of obsolete runs;
+- a durable dead-letter exchange and queue for failed event deliveries;
+- publisher confirms before the API reports an event as accepted;
+- poison-message rejection without stopping consumption;
+- three bounded ClickHouse insert attempts with 100 ms and 200 ms backoff;
+- dead-lettering after persistence retries are exhausted;
+- duplicate `event_id` filtering within each Worker batch;
+- integration coverage for dead-letter routing and unacknowledged redelivery;
+- documented at-least-once guarantees and duplicate-delivery limitations.
 
-Additional ranking metrics and RabbitMQ reliability mechanisms are intentionally outside this increment.
+Operational metrics and alerting are intentionally outside this increment.
 
 ## Requirements
 
@@ -122,6 +130,8 @@ On first startup, the database images apply the checked-in `apps` and `events` m
 
 RabbitMQ Management UI is available at [http://localhost:15672](http://localhost:15672) with the local credentials from `.env.example`.
 
+Increment 018 adds dead-letter arguments to the durable event queue. RabbitMQ does not allow an existing queue to be redeclared with different arguments. Before upgrading a persistent environment created by an earlier increment, drain `app.events`, delete that queue, and restart the API or Worker so it is recreated with the dead-letter configuration. Fresh Compose volumes require no manual action. See [Event processing reliability](docs/reliability.md) for the topology and delivery guarantees.
+
 Apply or roll back the `apps` table manually with the local development credentials:
 
 ```bash
@@ -158,7 +168,7 @@ Start the Worker in another terminal:
 go run ./cmd/worker
 ```
 
-The Worker subscribes to `app.events` with a prefetch of 500 and starts a batch timer when the first delivery enters an empty batch. It flushes when the batch reaches 500 events or after one second, whichever happens first. ClickHouse receives the whole batch through one native insert, and RabbitMQ deliveries are acknowledged only after that insert succeeds. A ClickHouse error leaves the entire batch unacknowledged; RabbitMQ requeues those deliveries when the consumer connection closes. During graceful shutdown the Worker stops accepting deliveries, flushes the remaining batch, acknowledges successful messages, and then releases its resources. Retry and DLQ policies are intentionally deferred.
+The API publishes each persistent event with AMQP `message_id` set to `event_id` and waits for a RabbitMQ publisher confirmation before returning `202 Accepted`. The Worker subscribes to `app.events` with a prefetch of 500 and starts a batch timer when the first delivery enters an empty batch. It flushes when the batch reaches 500 events or after one second, whichever happens first. ClickHouse receives the unique `event_id` values from the batch through one native insert, and every RabbitMQ delivery is acknowledged only after that insert succeeds. A transient insert failure is retried twice with exponential backoff. After the third failed attempt, all deliveries in the batch are rejected without requeue and routed to `app.events.dead-letter`; the Worker then returns the persistence error. Malformed or structurally invalid events are routed to the same queue and consumption continues. During graceful shutdown the Worker stops accepting deliveries, flushes the remaining batch, acknowledges successful messages, and then releases its resources.
 
 Check the service:
 

@@ -57,6 +57,12 @@ func NewPublisher(ctx context.Context, cfg Config) (*Publisher, error) {
 	if err := declareTopology(channel, cfg); err != nil {
 		return nil, errors.Join(err, closeChannelAndConnection(channel, connection))
 	}
+	if err := channel.Confirm(false); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("enable RabbitMQ publisher confirms: %w", err),
+			closeChannelAndConnection(channel, connection),
+		)
+	}
 
 	return &Publisher{
 		connection: connection,
@@ -79,13 +85,25 @@ func (p *Publisher) Publish(ctx context.Context, applicationEvent event.Event) e
 	if p.closed {
 		return errors.New("RabbitMQ publisher is closed")
 	}
-	if err := p.channel.PublishWithContext(ctx, p.exchange, p.routingKey, false, false, amqp.Publishing{
+	confirmation, err := p.channel.PublishWithDeferredConfirmWithContext(ctx, p.exchange, p.routingKey, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
+		MessageId:    applicationEvent.EventID.String(),
 		Timestamp:    time.Now().UTC(),
 		Body:         payload,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("publish RabbitMQ message: %w", err)
+	}
+	if confirmation == nil {
+		return errors.New("RabbitMQ publisher confirmation is unavailable")
+	}
+	acknowledged, err := confirmation.WaitContext(ctx)
+	if err != nil {
+		return fmt.Errorf("wait for RabbitMQ publisher confirmation: %w", err)
+	}
+	if !acknowledged {
+		return errors.New("RabbitMQ negatively acknowledged published message")
 	}
 	return nil
 }

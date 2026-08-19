@@ -96,6 +96,26 @@ func TestServiceIngestValidation(t *testing.T) {
 	}
 }
 
+func TestValidateEvent(t *testing.T) {
+	validEvent := Event{
+		EventID:      uuid.New(),
+		AppID:        validInput().AppID,
+		EventType:    TypePurchase,
+		Country:      "RS",
+		Platform:     PlatformAndroid,
+		RevenueCents: 999,
+		Timestamp:    validInput().Timestamp,
+	}
+	if err := Validate(validEvent); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	validEvent.EventID = uuid.Nil
+	if err := Validate(validEvent); !errors.Is(err, ErrEventIDRequired) {
+		t.Fatalf("Validate() error = %v, want ErrEventIDRequired", err)
+	}
+}
+
 func TestServiceIngestAllowsNegativeRevenueForNonPurchase(t *testing.T) {
 	input := validInput()
 	input.EventType = TypeSession
