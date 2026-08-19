@@ -41,3 +41,40 @@ type Filter struct {
 	Country     string
 	Platform    event.Platform
 }
+
+// RankingMetric identifies the aggregate used to order applications.
+type RankingMetric string
+
+const (
+	// RankingMetricInstalls orders applications by install count.
+	RankingMetricInstalls RankingMetric = "installs"
+)
+
+// Ranking contains one application and its metric value.
+type Ranking struct {
+	AppID uuid.UUID
+	Value uint64
+}
+
+// RankingResult contains an ordered application ranking.
+type RankingResult struct {
+	Metric RankingMetric
+	Items  []Ranking
+}
+
+// RankingInput contains raw optional Rankings API values.
+type RankingInput struct {
+	Metric  string
+	Country string
+	From    string
+	To      string
+	Limit   string
+}
+
+// RankingFilter contains validated ClickHouse ranking filters.
+type RankingFilter struct {
+	From        *time.Time
+	ToExclusive *time.Time
+	Country     string
+	Limit       uint64
+}

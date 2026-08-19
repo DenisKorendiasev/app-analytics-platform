@@ -13,4 +13,8 @@ var (
 	ErrDateRangeInvalid = errors.New("from must not be after to")
 	// ErrPlatformInvalid indicates that platform is not supported.
 	ErrPlatformInvalid = errors.New("platform must be android or ios")
+	// ErrMetricInvalid indicates that the ranking metric is not supported.
+	ErrMetricInvalid = errors.New("metric must be installs")
+	// ErrLimitInvalid indicates that the ranking limit is outside its accepted range.
+	ErrLimitInvalid = errors.New("limit must be an integer between 1 and 100")
 )
