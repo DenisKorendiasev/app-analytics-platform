@@ -3,12 +3,14 @@ package rabbitmq
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/DenisKorendiasev/app-analytics-platform/internal/event"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -35,6 +37,8 @@ type Publisher struct {
 	mu     sync.Mutex
 	closed bool
 }
+
+var _ event.Publisher = (*Publisher)(nil)
 
 // NewPublisher connects to RabbitMQ and declares the required durable topology.
 func NewPublisher(ctx context.Context, cfg Config) (*Publisher, error) {
@@ -85,8 +89,13 @@ func NewPublisher(ctx context.Context, cfg Config) (*Publisher, error) {
 	}, nil
 }
 
-// Publish sends a persistent JSON message to the configured exchange.
-func (p *Publisher) Publish(ctx context.Context, payload []byte) error {
+// Publish sends a persistent JSON event to the configured exchange.
+func (p *Publisher) Publish(ctx context.Context, applicationEvent event.Event) error {
+	payload, err := json.Marshal(applicationEvent)
+	if err != nil {
+		return fmt.Errorf("marshal RabbitMQ event: %w", err)
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 

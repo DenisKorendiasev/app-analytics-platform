@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/app"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/config"
+	"github.com/DenisKorendiasev/app-analytics-platform/internal/event"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/httpserver"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/postgres"
 	"github.com/DenisKorendiasev/app-analytics-platform/internal/rabbitmq"
@@ -71,8 +73,13 @@ func run() int {
 	appRepository := postgres.NewAppRepository(database)
 	appService := app.NewService(appRepository)
 	appHandler := app.NewHandler(appService, logger)
+	eventService := event.NewService(appRepository, eventPublisher)
+	eventHandler := event.NewHandler(eventService, logger)
 
-	server := httpserver.New(fmt.Sprintf(":%d", cfg.HTTPPort), logger, appHandler.RegisterRoutes)
+	server := httpserver.New(fmt.Sprintf(":%d", cfg.HTTPPort), logger, func(mux *http.ServeMux) {
+		appHandler.RegisterRoutes(mux)
+		eventHandler.RegisterRoutes(mux)
+	})
 	serverError := make(chan error, 1)
 	go func() {
 		logger.Info("HTTP server started", "port", cfg.HTTPPort)

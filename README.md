@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 005 adds RabbitMQ infrastructure:
+Increment 006 adds the Event ingestion API:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -21,14 +21,17 @@ Increment 005 adds RabbitMQ infrastructure:
 - `GET /api/v1/apps/{id}` to retrieve an application;
 - a durable RabbitMQ direct exchange, queue, and binding;
 - a persistent-message RabbitMQ publisher connected to the API lifecycle;
-- RabbitMQ Management UI for local development.
+- RabbitMQ Management UI for local development;
+- the `Event` domain model and validation for supported event types and platforms;
+- application existence checks before event acceptance;
+- `POST /api/v1/events` to publish accepted events to RabbitMQ.
 
-Event ingestion, publisher domain contracts, Worker, ClickHouse, and API containerization are intentionally outside this increment.
+Worker consumption, ClickHouse storage and analytics, retry/DLQ policies, and API containerization are intentionally outside this increment.
 
 ## Requirements
 
 - Go 1.25 or newer
-- Docker with Docker Compose for local PostgreSQL
+- Docker with Docker Compose for local PostgreSQL and RabbitMQ
 
 ## Configuration
 
@@ -95,6 +98,16 @@ curl -i -X POST http://localhost:8080/api/v1/apps \
 curl -i http://localhost:8080/api/v1/apps/<app-id>
 ```
 
+Publish an event for an existing application. A valid request returns `202 Accepted` and the generated event is written to the `app.events` RabbitMQ queue:
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/events \
+  -H 'Content-Type: application/json' \
+  -d '{"app_id":"<app-id>","event_type":"purchase","country":"RS","platform":"android","revenue_cents":999,"timestamp":"2026-08-18T12:35:02Z"}'
+```
+
+Supported event types are `install`, `session`, and `purchase`. Supported platforms are `android` and `ios`. Purchase revenue must be a non-negative integer number of cents.
+
 Stop the process with `Ctrl+C`; the server will stop accepting new connections and wait for active requests to complete.
 
 Run the PostgreSQL integration tests while the Compose service is healthy. The repository test applies the up migration and verifies the down migration:
@@ -107,6 +120,12 @@ Run the RabbitMQ publish/consume integration test while RabbitMQ is healthy:
 
 ```bash
 RABBITMQ_INTEGRATION_TEST=1 go test ./internal/rabbitmq -v
+```
+
+Run the complete Event ingestion integration test against both services:
+
+```bash
+POSTGRES_INTEGRATION_TEST=1 RABBITMQ_INTEGRATION_TEST=1 go test ./internal/event -v
 ```
 
 ## Verify
