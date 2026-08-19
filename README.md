@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 007 adds the Worker foundation:
+Increment 008 adds ClickHouse infrastructure:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -28,14 +28,19 @@ Increment 007 adds the Worker foundation:
 - a second Go application at `cmd/worker`;
 - a RabbitMQ consumer with manual acknowledgement and a one-message prefetch;
 - typed event decoding and structured event logging;
-- graceful Worker shutdown that finishes the current delivery before closing RabbitMQ.
+- graceful Worker shutdown that finishes the current delivery before closing RabbitMQ;
+- a ClickHouse 26.3 LTS Docker Compose service with health checks;
+- environment-based ClickHouse connection settings;
+- a native ClickHouse connection pool with verified startup and clean lifecycle;
+- reversible `events` table migrations;
+- a ClickHouse Event repository with single-event insertion.
 
-ClickHouse storage and analytics, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
+Worker-to-ClickHouse persistence, analytics APIs, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
 
 ## Requirements
 
 - Go 1.25 or newer
-- Docker with Docker Compose for local PostgreSQL and RabbitMQ
+- Docker with Docker Compose for local PostgreSQL, RabbitMQ, and ClickHouse
 
 ## Configuration
 
@@ -54,6 +59,11 @@ ClickHouse storage and analytics, batch processing, retry/DLQ policies, and appl
 | `RABBITMQ_EXCHANGE` | `app.events` | Durable direct exchange |
 | `RABBITMQ_QUEUE` | `app.events` | Durable event queue |
 | `RABBITMQ_ROUTING_KEY` | `app.events` | Queue binding and publish routing key |
+| `CLICKHOUSE_HOST` | `localhost` | ClickHouse host |
+| `CLICKHOUSE_PORT` | `9000` | ClickHouse native protocol port (1–65535) |
+| `CLICKHOUSE_DATABASE` | `app_analytics` | ClickHouse database |
+| `CLICKHOUSE_USER` | `app_analytics` | ClickHouse user |
+| `CLICKHOUSE_PASSWORD` | `app_analytics` | Local development password; override outside local development |
 
 Copy `.env.example` to `.env` to customize Docker Compose. Export the same values in your shell when running the API with non-default settings.
 
@@ -61,7 +71,7 @@ Copy `.env.example` to `.env` to customize Docker Compose. Export the same value
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres rabbitmq
+docker compose up -d postgres rabbitmq clickhouse
 docker compose ps
 ```
 
@@ -73,6 +83,15 @@ Apply or roll back the `apps` table manually with the local development credenti
 docker compose exec -T postgres psql -U app_analytics -d app_analytics < migrations/postgres/000001_create_apps.up.sql
 docker compose exec -T postgres psql -U app_analytics -d app_analytics < migrations/postgres/000001_create_apps.down.sql
 ```
+
+Apply or roll back the ClickHouse `events` table:
+
+```bash
+docker compose exec -T clickhouse clickhouse-client --user app_analytics --password app_analytics --database app_analytics < migrations/clickhouse/000001_create_events.up.sql
+docker compose exec -T clickhouse clickhouse-client --user app_analytics --password app_analytics --database app_analytics < migrations/clickhouse/000001_create_events.down.sql
+```
+
+The `events` table uses `MergeTree`, partitions by event month, and sorts by `(app_id, timestamp, event_id)`. This append-oriented layout supports future per-application time-range analytics while retaining deterministic ordering within equal timestamps. Event type, country, and platform use `LowCardinality(String)` because they are repeated analytical dimensions.
 
 ## Run locally
 
@@ -146,6 +165,12 @@ Run the Worker publish/receive/log/ack integration test while RabbitMQ is health
 
 ```bash
 RABBITMQ_INTEGRATION_TEST=1 go test ./internal/worker -v
+```
+
+Run the isolated ClickHouse migration/insert/select/down integration test while ClickHouse is healthy:
+
+```bash
+CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/clickhouse -v
 ```
 
 ## Verify
