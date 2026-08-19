@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 014 adds a Testcontainers integration test suite:
+Increment 015 adds a synthetic data generator:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -54,9 +54,15 @@ Increment 014 adds a Testcontainers integration test suite:
 - PostgreSQL repository create/read/existence, not-found, constraint, and migration coverage;
 - RabbitMQ publish, consume, persistence, and JSON message-format coverage;
 - ClickHouse single insert, batch insert, statistics, rankings, and migration coverage;
-- an end-to-end HTTP scenario from application creation and event ingestion through Worker processing to ClickHouse statistics.
+- an end-to-end HTTP scenario from application creation and event ingestion through Worker processing to ClickHouse statistics;
+- a third Go command at `cmd/generator` for producing configurable application and event volumes;
+- synthetic application names, publishers, and categories;
+- balanced install, session, and purchase events across generated applications;
+- randomized countries, Android/iOS platforms, and timestamps from the previous 30 days;
+- positive purchase revenue with zero revenue for non-purchase events;
+- all generated data sent through the public API and the real ingestion pipeline.
 
-Additional ranking metrics, retry/DLQ policies, synthetic data generation, and performance measurement are intentionally outside this increment.
+Performance measurement, additional ranking metrics, and retry/DLQ policies are intentionally outside this increment.
 
 ## Requirements
 
@@ -238,6 +244,25 @@ go test -tags=integration ./test/integration -v -count=1
 
 The `integration` build tag keeps the ordinary unit-test loop fast. The end-to-end test exercises the HTTP application and event handlers, PostgreSQL application repository, RabbitMQ publisher and consumer, Worker batching, ClickHouse event repository, and Statistics API in one scenario.
 
+## Generate synthetic data
+
+Start the complete Compose stack, then run the generator against its public API:
+
+```bash
+go run ./cmd/generator \
+  --api-url=http://localhost:8080 \
+  --events=100000 \
+  --apps=100
+```
+
+`--api-url` defaults to `http://localhost:8080`, `--apps` defaults to `10`, and `--events` defaults to `1000`. Both counts must be greater than zero. Applications are created before events, so every generated event references an application accepted by the API. The command stops on the first rejected request, supports interruption with `Ctrl+C`, and prints a JSON summary after success:
+
+```json
+{"apps_created":100,"events_accepted":100000}
+```
+
+The generator deliberately reports counts rather than performance metrics; throughput measurement belongs to the next increment.
+
 ## Verify
 
 ```bash
@@ -247,6 +272,7 @@ go test ./...
 go test -race ./...
 go test -tags=integration ./test/integration -v -count=1
 go build ./...
+go run ./cmd/generator --help
 docker build --target api -t app-analytics-api:local .
 docker build --target worker -t app-analytics-worker:local .
 docker compose config
