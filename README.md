@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 011 adds application rankings backed by ClickHouse:
+Increment 012 adds Worker batch processing:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -26,25 +26,25 @@ Increment 011 adds application rankings backed by ClickHouse:
 - application existence checks before event acceptance;
 - `POST /api/v1/events` to publish accepted events to RabbitMQ;
 - a second Go application at `cmd/worker`;
-- a RabbitMQ consumer with manual acknowledgement and a one-message prefetch;
+- a RabbitMQ consumer with manual acknowledgement and a 500-message prefetch;
 - typed event decoding and structured event logging;
 - graceful Worker shutdown that finishes the current delivery before closing RabbitMQ;
 - a ClickHouse 26.3 LTS Docker Compose service with health checks;
 - environment-based ClickHouse connection settings;
 - a native ClickHouse connection pool with verified startup and clean lifecycle;
 - reversible `events` table migrations;
-- a ClickHouse Event repository with single-event insertion;
-- Worker persistence of each consumed event in ClickHouse;
-- RabbitMQ acknowledgement only after a successful ClickHouse insert;
+- a ClickHouse Event repository with native batch insertion;
+- Worker batches of up to 500 events or one second of waiting;
+- RabbitMQ acknowledgement only after a successful ClickHouse batch insert;
 - unacknowledged delivery on ClickHouse persistence failure;
-- graceful Worker shutdown that finishes an in-flight ClickHouse insert;
+- graceful Worker shutdown that stops consumption, flushes the remaining batch, and then acknowledges it;
 - a ClickHouse connection integrated into the API lifecycle;
 - `GET /api/v1/apps/{id}/stats` with event counts and purchase revenue;
 - optional `from`, `to`, `country`, and `platform` statistics filters;
 - `GET /api/v1/rankings` ordered by install count;
 - optional ranking filters and a bounded result limit.
 
-Additional ranking metrics, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
+Additional ranking metrics, retry/DLQ policies, and application containerization are intentionally outside this increment.
 
 ## Requirements
 
@@ -116,7 +116,7 @@ Start the Worker in another terminal:
 go run ./cmd/worker
 ```
 
-The Worker subscribes to `app.events`, inserts each decoded event into ClickHouse, logs the successful persistence as structured JSON, and only then acknowledges the RabbitMQ delivery. A ClickHouse error stops the Worker without acknowledging the failed delivery; RabbitMQ requeues it when the consumer connection closes. Retry and DLQ policies are intentionally deferred.
+The Worker subscribes to `app.events` with a prefetch of 500 and starts a batch timer when the first delivery enters an empty batch. It flushes when the batch reaches 500 events or after one second, whichever happens first. ClickHouse receives the whole batch through one native insert, and RabbitMQ deliveries are acknowledged only after that insert succeeds. A ClickHouse error leaves the entire batch unacknowledged; RabbitMQ requeues those deliveries when the consumer connection closes. During graceful shutdown the Worker stops accepting deliveries, flushes the remaining batch, acknowledges successful messages, and then releases its resources. Retry and DLQ policies are intentionally deferred.
 
 Check the service:
 
@@ -212,7 +212,7 @@ Run the complete Event ingestion integration test against both services:
 POSTGRES_INTEGRATION_TEST=1 RABBITMQ_INTEGRATION_TEST=1 go test ./internal/event -v
 ```
 
-Run the Worker publish/persist/ack end-to-end integration test while RabbitMQ and ClickHouse are healthy:
+Run the Worker publish/timeout-batch/ack end-to-end integration test while RabbitMQ and ClickHouse are healthy:
 
 ```bash
 RABBITMQ_INTEGRATION_TEST=1 CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/worker -v
