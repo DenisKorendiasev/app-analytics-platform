@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 015 adds a synthetic data generator:
+Increment 016 adds reproducible performance measurements:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -60,9 +60,14 @@ Increment 015 adds a synthetic data generator:
 - balanced install, session, and purchase events across generated applications;
 - randomized countries, Android/iOS platforms, and timestamps from the previous 30 days;
 - positive purchase revenue with zero revenue for non-purchase events;
-- all generated data sent through the public API and the real ingestion pipeline.
+- all generated data sent through the public API and the real ingestion pipeline;
+- an isolated ClickHouse performance command comparing native inserts with batch sizes 1, 100, 500, and 1000;
+- raw and median events/sec, processing-duration, and ClickHouse insert-duration measurements;
+- automatic temporary-database creation and cleanup that leaves the source events table unchanged;
+- `EXPLAIN indexes = 1` analysis of the per-application statistics query on 100,000 synthetic events;
+- measured methodology, environment, raw results, limitations, and reproduction steps in `docs/performance.md`.
 
-Performance measurement, additional ranking metrics, and retry/DLQ policies are intentionally outside this increment.
+Additional ranking metrics, retry/DLQ policies, and continuous integration are intentionally outside this increment.
 
 ## Requirements
 
@@ -261,7 +266,22 @@ go run ./cmd/generator \
 {"apps_created":100,"events_accepted":100000}
 ```
 
-The generator deliberately reports counts rather than performance metrics; throughput measurement belongs to the next increment.
+The generator deliberately reports accepted counts. Use the isolated performance command below for ClickHouse insertion measurements rather than treating HTTP generation time as a storage benchmark.
+
+## Measure ClickHouse performance
+
+Start ClickHouse, then run the reproducible insertion and analytics measurement:
+
+```bash
+go run ./cmd/performance \
+  --events=1000 \
+  --runs=3 \
+  --batches=1,100,500,1000
+```
+
+The command uses the standard `CLICKHOUSE_*` configuration, clones the configured `events` schema into a temporary database, and removes that database when it finishes. The source database is not modified. Its JSON report contains every run and the median metrics for each batch size, followed by a real statistics-query result and its ClickHouse index plan.
+
+See [docs/performance.md](docs/performance.md) for the exact methodology, measured environment, raw numbers, interpretation, limitations, and isolated Compose reproduction commands.
 
 ## Verify
 
@@ -273,6 +293,7 @@ go test -race ./...
 go test -tags=integration ./test/integration -v -count=1
 go build ./...
 go run ./cmd/generator --help
+go run ./cmd/performance --help
 docker build --target api -t app-analytics-api:local .
 docker build --target worker -t app-analytics-worker:local .
 docker compose config
