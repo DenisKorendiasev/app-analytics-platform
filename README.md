@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 012 adds Worker batch processing:
+Increment 013 containerizes the API and Worker:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -42,20 +42,27 @@ Increment 012 adds Worker batch processing:
 - `GET /api/v1/apps/{id}/stats` with event counts and purchase revenue;
 - optional `from`, `to`, `country`, and `platform` statistics filters;
 - `GET /api/v1/rankings` ordered by install count;
-- optional ranking filters and a bounded result limit.
+- optional ranking filters and a bounded result limit;
+- one multi-stage Dockerfile with dedicated API and Worker targets;
+- non-root runtime containers with only the compiled application and runtime certificates;
+- a complete Docker Compose stack for PostgreSQL, RabbitMQ, ClickHouse, API, and Worker;
+- dependency health checks and ordered application startup;
+- automatic schema initialization for fresh PostgreSQL and ClickHouse volumes;
+- configurable host ports for isolated local stacks.
 
-Additional ranking metrics, retry/DLQ policies, and application containerization are intentionally outside this increment.
+Additional ranking metrics, retry/DLQ policies, and testcontainers-based integration tests are intentionally outside this increment.
 
 ## Requirements
 
-- Go 1.25 or newer
-- Docker with Docker Compose for local PostgreSQL, RabbitMQ, and ClickHouse
+- Go 1.25 or newer for running outside containers
+- Docker with Docker Compose for the complete local platform
 
 ## Configuration
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `HTTP_PORT` | `8080` | HTTP server port (1–65535) |
+| `API_HOST_PORT` | `8080` | Host port published for the containerized API |
 | `SHUTDOWN_TIMEOUT` | `10s` | Maximum graceful shutdown duration in Go duration format |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, or `ERROR` |
 | `POSTGRES_HOST` | `localhost` | PostgreSQL host |
@@ -64,25 +71,34 @@ Additional ranking metrics, retry/DLQ policies, and application containerization
 | `POSTGRES_USER` | `app_analytics` | PostgreSQL user |
 | `POSTGRES_PASSWORD` | `app_analytics` | Local development password; override outside local development |
 | `POSTGRES_SSLMODE` | `disable` | PostgreSQL SSL mode |
+| `POSTGRES_HOST_PORT` | `5432` | Host port published for PostgreSQL |
 | `RABBITMQ_URL` | `amqp://app_analytics:app_analytics@localhost:5672/` | RabbitMQ connection URL |
 | `RABBITMQ_EXCHANGE` | `app.events` | Durable direct exchange |
 | `RABBITMQ_QUEUE` | `app.events` | Durable event queue |
 | `RABBITMQ_ROUTING_KEY` | `app.events` | Queue binding and publish routing key |
+| `RABBITMQ_HOST_PORT` | `5672` | Host port published for AMQP |
+| `RABBITMQ_MANAGEMENT_HOST_PORT` | `15672` | Host port published for RabbitMQ Management UI |
 | `CLICKHOUSE_HOST` | `localhost` | ClickHouse host |
 | `CLICKHOUSE_PORT` | `9000` | ClickHouse native protocol port (1–65535) |
 | `CLICKHOUSE_DATABASE` | `app_analytics` | ClickHouse database |
 | `CLICKHOUSE_USER` | `app_analytics` | ClickHouse user |
 | `CLICKHOUSE_PASSWORD` | `app_analytics` | Local development password; override outside local development |
+| `CLICKHOUSE_HTTP_HOST_PORT` | `8123` | Host port published for ClickHouse HTTP protocol |
+| `CLICKHOUSE_NATIVE_HOST_PORT` | `9000` | Host port published for ClickHouse native protocol |
 
 Copy `.env.example` to `.env` to customize Docker Compose. Export the same values in your shell when running the API with non-default settings.
 
-## Start infrastructure
+## Start the platform with Docker Compose
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres rabbitmq clickhouse
+docker compose up --build -d
 docker compose ps
 ```
+
+Compose builds separate API and Worker targets from the same multi-stage Dockerfile. A small ClickHouse target adds the database-aware init script to the official image. The API becomes healthy only after PostgreSQL, RabbitMQ, and ClickHouse are healthy; the Worker also waits for RabbitMQ and ClickHouse. The API is available at [http://localhost:8080](http://localhost:8080) by default.
+
+On first startup, the database images apply the checked-in `apps` and `events` migrations while initializing their data volumes. Existing volumes are preserved and are not initialized again. Use the manual commands below when applying or rolling back migrations in an existing development volume.
 
 RabbitMQ Management UI is available at [http://localhost:15672](http://localhost:15672) with the local credentials from `.env.example`.
 
@@ -103,6 +119,12 @@ docker compose exec -T clickhouse clickhouse-client --user app_analytics --passw
 The `events` table uses `MergeTree`, partitions by event month, and sorts by `(app_id, timestamp, event_id)`. This append-oriented layout supports future per-application time-range analytics while retaining deterministic ordering within equal timestamps. Event type, country, and platform use `LowCardinality(String)` because they are repeated analytical dimensions.
 
 ## Run locally
+
+To run the Go applications directly, start only the infrastructure and apply migrations as described above:
+
+```bash
+docker compose up -d postgres rabbitmq clickhouse
+```
 
 Start the API:
 
@@ -194,6 +216,12 @@ The only supported metric in this increment is `installs`; omitting `metric` sel
 
 Stop the process with `Ctrl+C`; the server will stop accepting new connections and wait for active requests to complete.
 
+Stop the containerized platform without deleting persisted data:
+
+```bash
+docker compose down
+```
+
 Run the PostgreSQL integration tests while the Compose service is healthy. The repository test applies the up migration and verifies the down migration:
 
 ```bash
@@ -230,6 +258,11 @@ CLICKHOUSE_INTEGRATION_TEST=1 go test ./internal/clickhouse -v
 go fmt ./...
 go vet ./...
 go test ./...
+go test -race ./...
 go build ./...
+docker build --target api -t app-analytics-api:local .
+docker build --target worker -t app-analytics-worker:local .
 docker compose config
+docker compose up -d
+docker compose ps
 ```
