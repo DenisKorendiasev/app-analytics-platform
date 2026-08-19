@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 006 adds the Event ingestion API:
+Increment 007 adds the Worker foundation:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -24,9 +24,13 @@ Increment 006 adds the Event ingestion API:
 - RabbitMQ Management UI for local development;
 - the `Event` domain model and validation for supported event types and platforms;
 - application existence checks before event acceptance;
-- `POST /api/v1/events` to publish accepted events to RabbitMQ.
+- `POST /api/v1/events` to publish accepted events to RabbitMQ;
+- a second Go application at `cmd/worker`;
+- a RabbitMQ consumer with manual acknowledgement and a one-message prefetch;
+- typed event decoding and structured event logging;
+- graceful Worker shutdown that finishes the current delivery before closing RabbitMQ.
 
-Worker consumption, ClickHouse storage and analytics, retry/DLQ policies, and API containerization are intentionally outside this increment.
+ClickHouse storage and analytics, batch processing, retry/DLQ policies, and application containerization are intentionally outside this increment.
 
 ## Requirements
 
@@ -72,9 +76,19 @@ docker compose exec -T postgres psql -U app_analytics -d app_analytics < migrati
 
 ## Run locally
 
+Start the API:
+
 ```bash
 go run ./cmd/api
 ```
+
+Start the Worker in another terminal:
+
+```bash
+go run ./cmd/worker
+```
+
+The Worker subscribes to `app.events`, logs each decoded event as structured JSON, and acknowledges it after the current log-only processing completes.
 
 Check the service:
 
@@ -126,6 +140,12 @@ Run the complete Event ingestion integration test against both services:
 
 ```bash
 POSTGRES_INTEGRATION_TEST=1 RABBITMQ_INTEGRATION_TEST=1 go test ./internal/event -v
+```
+
+Run the Worker publish/receive/log/ack integration test while RabbitMQ is healthy:
+
+```bash
+RABBITMQ_INTEGRATION_TEST=1 go test ./internal/worker -v
 ```
 
 ## Verify

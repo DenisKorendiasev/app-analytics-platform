@@ -1,4 +1,4 @@
-// Package rabbitmq provides RabbitMQ infrastructure for publishing messages.
+// Package rabbitmq provides RabbitMQ infrastructure for publishing and consuming events.
 package rabbitmq
 
 import (
@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -42,14 +41,7 @@ var _ event.Publisher = (*Publisher)(nil)
 
 // NewPublisher connects to RabbitMQ and declares the required durable topology.
 func NewPublisher(ctx context.Context, cfg Config) (*Publisher, error) {
-	dialer := &net.Dialer{Timeout: connectionTimeout}
-	connection, err := amqp.DialConfig(cfg.URL, amqp.Config{
-		Heartbeat: heartbeatTimeout,
-		Locale:    "en_US",
-		Dial: func(network, address string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, address)
-		},
-	})
+	connection, err := dial(ctx, cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("connect to RabbitMQ: %w", err)
 	}
@@ -62,23 +54,8 @@ func NewPublisher(ctx context.Context, cfg Config) (*Publisher, error) {
 		)
 	}
 
-	if err := channel.ExchangeDeclare(cfg.Exchange, "direct", true, false, false, false, nil); err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("declare RabbitMQ exchange %q: %w", cfg.Exchange, err),
-			closeChannelAndConnection(channel, connection),
-		)
-	}
-	if _, err := channel.QueueDeclare(cfg.Queue, true, false, false, false, nil); err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("declare RabbitMQ queue %q: %w", cfg.Queue, err),
-			closeChannelAndConnection(channel, connection),
-		)
-	}
-	if err := channel.QueueBind(cfg.Queue, cfg.RoutingKey, cfg.Exchange, false, nil); err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("bind RabbitMQ queue %q: %w", cfg.Queue, err),
-			closeChannelAndConnection(channel, connection),
-		)
+	if err := declareTopology(channel, cfg); err != nil {
+		return nil, errors.Join(err, closeChannelAndConnection(channel, connection))
 	}
 
 	return &Publisher{
