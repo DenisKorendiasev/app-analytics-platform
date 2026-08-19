@@ -4,7 +4,7 @@ Backend platform for collecting and analyzing mobile application events. The pro
 
 ## Current increment
 
-Increment 002 adds PostgreSQL infrastructure to the API foundation:
+Increment 003 adds the first domain feature and PostgreSQL persistence:
 
 - a Go HTTP server;
 - `GET /health` health check;
@@ -13,9 +13,12 @@ Increment 002 adds PostgreSQL infrastructure to the API foundation:
 - graceful shutdown on `SIGINT` and `SIGTERM`;
 - a PostgreSQL connection pool verified before the HTTP server starts;
 - a PostgreSQL-only Docker Compose service;
-- clean pool shutdown after the HTTP server stops.
+- clean pool shutdown after the HTTP server stops;
+- the `App` domain model and service validation;
+- PostgreSQL `App` repository operations (`Create`, `GetByID`, and `Exists`);
+- reversible SQL migrations for the `apps` table.
 
-Tables, migrations, business endpoints, RabbitMQ, ClickHouse, and API containerization are intentionally outside this increment.
+HTTP business endpoints, RabbitMQ, ClickHouse, and API containerization are intentionally outside this increment.
 
 ## Requirements
 
@@ -46,6 +49,13 @@ docker compose up -d postgres
 docker compose ps
 ```
 
+Apply or roll back the `apps` table manually with the local development credentials:
+
+```bash
+docker compose exec -T postgres psql -U app_analytics -d app_analytics < migrations/postgres/000001_create_apps.up.sql
+docker compose exec -T postgres psql -U app_analytics -d app_analytics < migrations/postgres/000001_create_apps.down.sql
+```
+
 ## Run locally
 
 ```bash
@@ -66,10 +76,10 @@ Expected response:
 
 Stop the process with `Ctrl+C`; the server will stop accepting new connections and wait for active requests to complete.
 
-Run the PostgreSQL integration test while the Compose service is healthy:
+Run the PostgreSQL integration tests while the Compose service is healthy. The repository test applies the up migration and verifies the down migration:
 
 ```bash
-POSTGRES_INTEGRATION_TEST=1 go test ./internal/postgres -run TestOpen -v
+POSTGRES_INTEGRATION_TEST=1 go test ./internal/postgres -v
 ```
 
 ## Verify
