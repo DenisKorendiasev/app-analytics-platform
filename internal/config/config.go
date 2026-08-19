@@ -25,7 +25,7 @@ const (
 	defaultRabbitMQRoutingKey = "app.events"
 )
 
-// Config contains the runtime settings for the API server.
+// Config contains runtime settings shared by the platform applications.
 type Config struct {
 	HTTPPort        int
 	ShutdownTimeout time.Duration
