@@ -53,6 +53,21 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.RabbitMQ.RoutingKey != "app.events" {
 		t.Errorf("RabbitMQ.RoutingKey = %q, want app.events", cfg.RabbitMQ.RoutingKey)
 	}
+	if cfg.ClickHouse.Host != "localhost" {
+		t.Errorf("ClickHouse.Host = %q, want localhost", cfg.ClickHouse.Host)
+	}
+	if cfg.ClickHouse.Port != 9000 {
+		t.Errorf("ClickHouse.Port = %d, want 9000", cfg.ClickHouse.Port)
+	}
+	if cfg.ClickHouse.Database != "app_analytics" {
+		t.Errorf("ClickHouse.Database = %q, want app_analytics", cfg.ClickHouse.Database)
+	}
+	if cfg.ClickHouse.User != "app_analytics" {
+		t.Errorf("ClickHouse.User = %q, want app_analytics", cfg.ClickHouse.User)
+	}
+	if cfg.ClickHouse.Password != "app_analytics" {
+		t.Errorf("ClickHouse.Password = %q, want local development password", cfg.ClickHouse.Password)
+	}
 }
 
 func TestLoadFromEnvironment(t *testing.T) {
@@ -70,6 +85,11 @@ func TestLoadFromEnvironment(t *testing.T) {
 	t.Setenv("RABBITMQ_EXCHANGE", "events.exchange")
 	t.Setenv("RABBITMQ_QUEUE", "events.queue")
 	t.Setenv("RABBITMQ_ROUTING_KEY", "events.created")
+	t.Setenv("CLICKHOUSE_HOST", "clickhouse.internal")
+	t.Setenv("CLICKHOUSE_PORT", "9440")
+	t.Setenv("CLICKHOUSE_DATABASE", "analytics")
+	t.Setenv("CLICKHOUSE_USER", "analytics_user")
+	t.Setenv("CLICKHOUSE_PASSWORD", "analytics_password")
 
 	cfg, err := Load()
 	if err != nil {
@@ -115,6 +135,21 @@ func TestLoadFromEnvironment(t *testing.T) {
 	if cfg.RabbitMQ.RoutingKey != "events.created" {
 		t.Errorf("RabbitMQ.RoutingKey = %q, want events.created", cfg.RabbitMQ.RoutingKey)
 	}
+	if cfg.ClickHouse.Host != "clickhouse.internal" {
+		t.Errorf("ClickHouse.Host = %q, want clickhouse.internal", cfg.ClickHouse.Host)
+	}
+	if cfg.ClickHouse.Port != 9440 {
+		t.Errorf("ClickHouse.Port = %d, want 9440", cfg.ClickHouse.Port)
+	}
+	if cfg.ClickHouse.Database != "analytics" {
+		t.Errorf("ClickHouse.Database = %q, want analytics", cfg.ClickHouse.Database)
+	}
+	if cfg.ClickHouse.User != "analytics_user" {
+		t.Errorf("ClickHouse.User = %q, want analytics_user", cfg.ClickHouse.User)
+	}
+	if cfg.ClickHouse.Password != "analytics_password" {
+		t.Errorf("ClickHouse.Password = %q, want environment value", cfg.ClickHouse.Password)
+	}
 }
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
@@ -134,6 +169,8 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "invalid rabbitmq URL", key: "RABBITMQ_URL", value: "not-a-url"},
 		{name: "invalid rabbitmq scheme", key: "RABBITMQ_URL", value: "https://rabbitmq.internal"},
 		{name: "missing rabbitmq host", key: "RABBITMQ_URL", value: "amqp://:5672/"},
+		{name: "non-numeric clickhouse port", key: "CLICKHOUSE_PORT", value: "native"},
+		{name: "clickhouse port out of range", key: "CLICKHOUSE_PORT", value: "65536"},
 	}
 
 	for _, tt := range tests {
@@ -165,6 +202,11 @@ func clearEnvironment(t *testing.T) {
 		"RABBITMQ_EXCHANGE",
 		"RABBITMQ_QUEUE",
 		"RABBITMQ_ROUTING_KEY",
+		"CLICKHOUSE_HOST",
+		"CLICKHOUSE_PORT",
+		"CLICKHOUSE_DATABASE",
+		"CLICKHOUSE_USER",
+		"CLICKHOUSE_PASSWORD",
 	} {
 		t.Setenv(key, "")
 	}

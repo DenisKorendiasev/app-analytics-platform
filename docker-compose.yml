@@ -31,6 +31,25 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3-alpine
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-app_analytics}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-app_analytics}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-app_analytics}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+
 volumes:
   postgres_data:
   rabbitmq_data:
+  clickhouse_data:

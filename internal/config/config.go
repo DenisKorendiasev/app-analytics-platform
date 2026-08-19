@@ -23,6 +23,11 @@ const (
 	defaultRabbitMQExchange   = "app.events"
 	defaultRabbitMQQueue      = "app.events"
 	defaultRabbitMQRoutingKey = "app.events"
+	defaultClickHouseHost     = "localhost"
+	defaultClickHousePort     = 9000
+	defaultClickHouseDatabase = "app_analytics"
+	defaultClickHouseUser     = "app_analytics"
+	defaultClickHousePassword = "app_analytics"
 )
 
 // Config contains runtime settings shared by the platform applications.
@@ -32,6 +37,16 @@ type Config struct {
 	LogLevel        slog.Level
 	Postgres        PostgresConfig
 	RabbitMQ        RabbitMQConfig
+	ClickHouse      ClickHouseConfig
+}
+
+// ClickHouseConfig contains the settings required to connect to ClickHouse.
+type ClickHouseConfig struct {
+	Host     string
+	Port     int
+	Database string
+	User     string
+	Password string
 }
 
 // RabbitMQConfig contains the settings required to connect to RabbitMQ.
@@ -71,6 +86,13 @@ func Load() (Config, error) {
 			Exchange:   defaultRabbitMQExchange,
 			Queue:      defaultRabbitMQQueue,
 			RoutingKey: defaultRabbitMQRoutingKey,
+		},
+		ClickHouse: ClickHouseConfig{
+			Host:     defaultClickHouseHost,
+			Port:     defaultClickHousePort,
+			Database: defaultClickHouseDatabase,
+			User:     defaultClickHouseUser,
+			Password: defaultClickHousePassword,
 		},
 	}
 
@@ -140,6 +162,26 @@ func Load() (Config, error) {
 	}
 	if value := os.Getenv("RABBITMQ_ROUTING_KEY"); value != "" {
 		cfg.RabbitMQ.RoutingKey = value
+	}
+
+	if value := os.Getenv("CLICKHOUSE_HOST"); value != "" {
+		cfg.ClickHouse.Host = value
+	}
+	if value := os.Getenv("CLICKHOUSE_PORT"); value != "" {
+		port, err := strconv.Atoi(value)
+		if err != nil || port < 1 || port > 65535 {
+			return Config{}, fmt.Errorf("CLICKHOUSE_PORT must be an integer between 1 and 65535")
+		}
+		cfg.ClickHouse.Port = port
+	}
+	if value := os.Getenv("CLICKHOUSE_DATABASE"); value != "" {
+		cfg.ClickHouse.Database = value
+	}
+	if value := os.Getenv("CLICKHOUSE_USER"); value != "" {
+		cfg.ClickHouse.User = value
+	}
+	if value := os.Getenv("CLICKHOUSE_PASSWORD"); value != "" {
+		cfg.ClickHouse.Password = value
 	}
 
 	return cfg, nil
